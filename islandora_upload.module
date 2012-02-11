@@ -774,10 +774,10 @@ function islandora_upload_delete_fedora_objects($node, $uid) {
     $fedora_item = new Fedora_Item($PID);
     if  ($fedora_item->exists())  {
       $state = "D";
-      $label = "";
+      $label = ""; // needs to be filled in with objects label.
       $ownerId = $node->uid; //The object owner is the node owner.
       $log_message = "Node {NID:" . $node->nid . "} created by {UID:" . $node->uid . "} which is associate with this object has been deleted by user {" . $uid . "}.";
-      $fedora_item->modify_object($label, $state, $ownerId = NULL, $logMessage, TRUE);
+      $fedora_item->modify_object($label, $state, $ownerId, $logMessage, TRUE);
     }
   }
   db_query("DELETE FROM {node_fedora_objects} where nid = '" . $node->nid . "'");
