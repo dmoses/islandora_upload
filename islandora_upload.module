@@ -198,16 +198,26 @@ function islandora_upload_node_form_submit(&$form, &$form_state) {
     'file_validate_size' => array($limits['file_size'], $limits['user_size']),
   );
 
+ if (user_access('attach files')) {
+ $file = file_save_upload('upload', $validators, file_directory_path());
+ $check = islandora_check_mime($file);
+
+  if (!empty($check)) {
+  drupal_set_message("$check", 'error');
+  file_delete($file->filepath);
+  db_query("DELETE FROM {attach_files} WHERE fid = %d", $fid);
+  }
+  else {
+    if (!empty($file)) {
+
   // Save new file uploads.
-  if (user_access('attach files') && ($file = file_save_upload('upload', $validators, file_directory_path()))) {
     $file->list = variable_get('upload_list_default', 1);
     $file->description = $file->filename;
     $file->weight = 0;
     $file->new = TRUE;
     $form['#node']->files[$file->fid] = $file;
     $form_state['values']['files'][$file->fid] = (array)$file;
-  }
-
+  }}
   if (isset($form_state['values']['files'])) {
     foreach ($form_state['values']['files'] as $fid => $file) {
       // If the node was previewed prior to saving, $form['#node']->files[$fid]
@@ -228,7 +238,9 @@ function islandora_upload_node_form_submit(&$form, &$form_state) {
     }
     uasort($form_state['values']['files'], 'element_sort');
   }
-}
+
+  }
+ }
 /**
  * Implementation of hook_file_download().
  */
@@ -414,7 +426,7 @@ function islandora_upload_nodeapi(&$node, $op, $teaser = NULL) {
     case 'delete':
       islandora_upload_delete($node);
       // if user has permission user purge else use delete
-      // islandora_upload_purge_fedora_objects($node, $user->uid);
+      islandora_upload_delete_fedora_objects($node, $user->uid);
       break;
 
     case 'delete revision':
@@ -583,6 +595,31 @@ function islandora_upload_load($node) {
 }
 
 /**
+ * When a file is uploaded this function will be called
+ * to determine the MIME Type
+ *
+ * @param $file
+ *  A file that is uploaded by the user
+ *
+ */
+
+function islandora_check_mime($file) {
+
+if (!empty($file)) {
+// Grabs the default list of extensions currently defined
+// in islandora_upload.admin.inc
+$extensions = variable_get('upload_extensions_default', 'jpg jpeg gif png txt doc xls pdf ppt pps odt ods odp');
+
+// Calls the filefield_validate_extensions which
+// utilizes the mimedetect module from within
+$mime = implode(filefield_validate_extensions($file, $extensions));
+
+return $mime;
+}
+
+}
+
+/**
  * Menu-callback for JavaScript-based uploads.
  */
 function islandora_upload_js() {
@@ -660,7 +697,7 @@ function islandora_upload_js() {
 
 /**
  * When a Drupal Node is deleted this function will delete
- * all associated Fedora Objects
+ * all associated Fedora Objects Datasteams.
  *
  * @param $node
  *   A node object.
@@ -668,7 +705,8 @@ function islandora_upload_js() {
  *   The current User ID. (This is the user deleting the node)
  *
  */
-function islandora_upload_delete_fedora_objects($node, $uid) {
+
+function islandora_upload_delete_fedora_object_datastreams($node, $uid) {
 
   //Grab all pid attached to the drupal node
   $sql = "SELECT pid FROM {node_fedora_objects} WHERE nid = '" . $node->nid . "'";
@@ -676,16 +714,18 @@ function islandora_upload_delete_fedora_objects($node, $uid) {
 
   while ($PID = db_result($results)) { // Get the next result, which will/must always be a single field
     $fedora_item = new Fedora_Item($PID);
-    //check to see if the fedora object exists, if exists 1 is returned.
     if  ($fedora_item->exists())  {
-      $state = 'D'; //Set the object to deleted
-      $dsid = array_key_exists('QDC', $fedora_item->get_datastreams_list_as_array()) ? 'QDC' : 'DC';
-      $log_message = "Node {NID:" . $node->nid . "} created by {UID:" . $node->uid . "} which is associate with this object has been deleted by user {" . $uid . "}.";
-      $fedora_item->set_datastream_state($dsid, $state, $log_message);
+      $dsid_array = $fedora_item->get_datastreams_list_as_array();
+      foreach ($dsid_array as $dsid) {
+        $state = 'D'; //Set the datastream to deleted
+        $log_message = "Node {NID:" . $node->nid . "} created by {UID:" . $node->uid . "} which is associate with this object has been deleted by user {" . $uid . "}.";
+        $fedora_item->set_datastream_state($dsid, $state, $log_message);
+      }
     }
   }
   db_query("DELETE FROM {node_fedora_objects} where nid = '" . $node->nid . "'");
 }
+
 /**
  * When a Drupal Node is deleted this function will purge
  * all associated Fedora Objects
@@ -696,6 +736,7 @@ function islandora_upload_delete_fedora_objects($node, $uid) {
  *   The current User ID. (This is the user deleting the node)
  *
  */
+
 function islandora_upload_purge_fedora_objects($node, $uid) {
 
   //Grab all pid attached to the drupal node
@@ -704,11 +745,40 @@ function islandora_upload_purge_fedora_objects($node, $uid) {
 
   while ($PID = db_result($results)) { // Get the next result, which will/must always be a single field
     $fedora_item = new Fedora_Item($PID);
-    //check to see if the fedora object exists, if exists 1 is returned.
     if  ($fedora_item->exists())  {
       $log_message = "Node {NID:" . $node->nid . "} created by {UID:" . $node->uid . "} which is associate with this object has been purged by user {" . $uid . "}.";
       $fedora_item->purge($log_message, TRUE); //remove the fedora object
     }
   }
   db_query("DELETE FROM {node_fedora_objects} where nid = '" . $node->nid . "'");
-}
+ }
+
+/**
+ * When a Drupal Node is deleted this function will set the fedora object state
+ * of all associated Fedora Objects to D (Deleted).
+ *
+ * @param $node
+ *   A node object.
+ * @param $uid
+ *   The current User ID. (This is the user deleting the node)
+ *
+ */
+
+function islandora_upload_delete_fedora_objects($node, $uid) {
+
+  //Grab all pid attached to the drupal node
+  $sql = "SELECT pid FROM {node_fedora_objects} WHERE nid = '" . $node->nid . "'";
+  $results = db_query($sql);
+
+  while ($PID = db_result($results)) { // Get the next result, which will/must always be a single field
+    $fedora_item = new Fedora_Item($PID);
+    if  ($fedora_item->exists())  {
+      $state = "D";
+      $label = "";
+      $ownerId = $node->uid; //The object owner is the node owner.
+      $log_message = "Node {NID:" . $node->nid . "} created by {UID:" . $node->uid . "} which is associate with this object has been deleted by user {" . $uid . "}.";
+      $fedora_item->modify_object($label, $state, $ownerId = NULL, $logMessage, TRUE);
+    }
+  }
+  db_query("DELETE FROM {node_fedora_objects} where nid = '" . $node->nid . "'");
+ }
