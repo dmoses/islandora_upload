@@ -111,14 +111,13 @@ if (Drupal.jsEnabled)
 					user_total = item.number_of_users;
 					role_total = item.number_of_roles;
 					
-					$permissions_settings_users += '<div id = "user-permission-containter" style = ""><fieldset class="collapse-processed"><legend class="collapse-processed">User Permissions</legend><div class="description">Set User Based Permissions</div><div id="permission_users"><table><tr>';
+					$permissions_settings_users += '<div id = "user-permission-containter"><fieldset class="collapse-processed"><legend class="collapse-processed">User Permissions</legend><div class="description">Set User Based Permissions</div><div id="permission_users"><table><tr>';
 				}
 				//Since the first item is the radio selection don't try and make a checkbox,
 				//otherwise keep making checkboxes for users while i is <= the total number of users.
 				if(i <= user_total && i != '0') 
 				{
-					var user_perm = item.data; 
-					$permissions_settings_users += "<td width='2px'><input ' type='checkbox' name='users[]' value='"+ item.data +"'";
+					$permissions_settings_users += "<td width='2px'><input type='checkbox' name='users[]' value='" + item.id_value + "'";
 
 					if(item.checked == true) 
 					{
@@ -147,15 +146,13 @@ if (Drupal.jsEnabled)
 						}
 					}	
 					$permissions_settings_users += '</tr></table></div></fieldset></div>';
-					$permissions_settings_roles += '<div id = "role-permission-containter" style = ""><fieldset class="collapse-processed"><legend class="collapse-processed">Role Permissions</legend><div class="description">Set Role Based Access Permissions</div><div id="permission_roles"><table><tr>';
+					$permissions_settings_roles += '<div id = "role-permission-containter"><fieldset class="collapse-processed"><legend class="collapse-processed">Role Permissions</legend><div class="description">Set Role Based Access Permissions</div><div id="permission_roles"><table><tr>';
 					count = 1; //reset to 1
 				}
 
 				if(i > user_total) 
 				{
-					//loop i print 4 and then insert a BR
-					var user_perm = item.data; 
-					$permissions_settings_roles += "<td width='2px'><input ' type='checkbox' name='users[]' value='"+ item.data +"'";
+					$permissions_settings_roles += "<td width='2px'><input type='checkbox' name='roles[]' value='" + item.id_value + "'";
 
 					if(item.checked == true) 
 					{

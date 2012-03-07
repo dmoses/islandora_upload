@@ -196,7 +196,17 @@ function _islandora_upload_file_limits($user) {
     'resolution' => variable_get('upload_max_resolution', 0),
   );
 }
-
+/**
+ * Check if the current user has access to the objects if so return true otherwise return false.
+ *
+ * @param $pid
+ *   The object trying to be accessed.
+ * @param $uid
+ *   The user who is trying to access pid.
+ */
+function islandora_upload_check_object_access($pid, $uid) {
+  return TRUE;
+}
 
 /**
  * Save new uploads and store them in the session to be associated to the node
@@ -258,7 +268,7 @@ function islandora_upload_node_form_submit(&$form, &$form_state) {
 }
 
 /**
- * Convert a fedora object into a file object so the form can display it like a file.
+ *  Convert a fedora object into a file object so the form can display it like a file.
  *  @param $PID
  *  The PID to be converted into a file object.
  *  @return $file
@@ -272,25 +282,38 @@ function islandora_obj_to_file($PID) {
   $path = $fedora_item->get_datastreams_list_as_array();
 
   if (array_key_exists('OBJ', $path)) {
-    $templabel = $path['OBJ']['label'];
+    $label = $path['OBJ']['label'];
+    $path = $path['OBJ']['URL'];
+    preg_match('#(/-/.*)/OBJ#s', $path, $match);
+    $result = $match[1];
+    $path = str_replace($result, '', $path);
+    $path = str_replace($label, '', $path);
 
-    $path = str_replace('/-/', '', $path['OBJ']['URL']);
-    $path = str_replace($templabel, '', $path);
     $obj = $fedora_item->get_datastream('OBJ');
     $file->filepath = $path;
     $file->filename = $obj->label;
     $file->filemime = $obj->MIMEType;
     $file->filesize = $obj->size;
-    $file->description = $obj->label;
+    $file->description = $fedora_item->objectProfile->objLabel;
     $file->pid = $PID;
     $file->list = 1;
   }
   else {
-    drupal_set_message("OBJ DATASTREAM MISSING");
     $file = NULL;
   }
   return $file;
 }
+
+function islandora_attachment_validate(&$form, &$form_state) {
+  if (!empty($form_state['values']['islandora_files'])) {
+    foreach ($form_state['values']['islandora_files'] as $file) {
+      if (empty($file['description'])) {
+        form_set_error('', t('All files must have a description.'));
+      }
+    }
+  }
+}
+
 /**
  * Convert a fedora object into a file object so the form can display it like a file.
  *  @param $node
@@ -315,7 +338,7 @@ function islandora_get_PIDs($node) {
     if ($fedora_item->exists()) {
       $tempfile = islandora_obj_to_file($pid);
       if (!empty($tempfile)) {
-        array_push($files, islandora_obj_to_file($pid));
+        array_push($files, $tempfile);
       }
     }
   }
@@ -404,7 +427,7 @@ function islandora_upload_form_alter(&$form, $form_state, $form_id) {
         '#suffix' => '</div>',
         '#weight' => 30,
       );
-
+      $form['#validate'][] = 'islandora_attachment_validate';
       // Wrapper for fieldset contents (used by ahah.js).
       $form['attachments']['wrapper'] = array(
         '#prefix' => '<div id="attach-wrapper">',
@@ -540,8 +563,6 @@ function theme_islandora_upload_attachments($files) {
  * The node and the current user id.
  */
 function islandora_upload_save(&$node, $uid) {
-  module_load_include('inc', 'islandora_xacml_api', 'Xacml');
-  module_load_include('inc', 'islandora_xacml_api', 'XacmlException');
   if (empty($node->islandora_files) || !is_array($node->islandora_files)) {
     return;
   }
@@ -556,9 +577,9 @@ function islandora_upload_save(&$node, $uid) {
     // will be required.
     if (!empty($file->remove)) {
      // call delete function which either purges or edits the pid
-     if(!empty($file->pid)) {
+      if (!empty($file->pid)) {
 
-     }
+      }
 
       // Remove it from the session in the case of new uploads,
       // that you want to disassociate before node submission.
@@ -570,10 +591,10 @@ function islandora_upload_save(&$node, $uid) {
     // Create a new revision, or associate a new file needed.
     if ($file->new) {
 
-      //Params for ingest_new_item($pid = '', $state = 'A', $label = '', $owner = '')
+      // Params for ingest_new_item($pid = '', $state = 'A', $label = '', $owner = '')
       // IMPORTANT NOTE: THE OBJ AND PID LABEL SHOULD ALWAYS MATCH
       $fedora_item = Fedora_Item::ingest_new_item(Fedora_Item::get_next_PID_in_namespace("islandora"), 'A', $file->description);
-      $fedora_item->add_datastream_from_file($file->filepath, "OBJ", $file->description);
+      $fedora_item->add_datastream_from_file($file->filepath, "OBJ", $file->filename);
       $fedora_item->add_relationship("fedora:isMemberOfCollection", "islandora:sp_generic_collection");
       array_push($new_pids, $fedora_item->pid);
     }
@@ -863,7 +884,6 @@ function get_file_private_uid($pid) {
  *   An array of User Names(owner of the node/file) or false
  *
  */
-
 function get_file_accessable_users($pid) {
   $result = array();
   //Grab iapid (islandora attachment permission ID) of a file using the PID to look up
@@ -876,8 +896,8 @@ function get_file_accessable_users($pid) {
   $sql = "SELECT uid FROM {islandora_attachment_permission_users} WHERE ubid = '" . $iapid . "'";
   $results = db_query($sql);
 
-  while ($UBID = db_result($results)) { // Get the next result, which will/must always be a single field
-    $sql2 = "SELECT name FROM {users} WHERE uid = '" . $UBID . "'";
+  while ($UID = db_result($results)) { // Get the next result, which will/must always be a single field
+    $sql2 = "SELECT name FROM {users} WHERE uid = '" . $UID . "'";
     $user_result = db_query($sql2);
     $user_name = db_result($user_result);
     $result[] = $user_name;
@@ -892,7 +912,7 @@ function get_file_accessable_users($pid) {
 /**
  * Used to get role ID's that are set as able to access a given file.  Uses
  * PID to look up ID of {islandora_attachment_permissions} and then uses the ID
- * to grab any set role ids from {islandora_attachment_permission_groups}
+ * to grab any set role ids from {islandora_attachment_permission_roles}
  *
  * @param $pid
  *   The pid of the file attached to a node.
@@ -910,11 +930,11 @@ function get_file_accessable_roles($pid) {
 
   //rbid is the Role Binding ID
   //Find all roles associate with islandora attachment permission ID
-  $sql = "SELECT rid FROM {islandora_attachment_permission_groups} WHERE rbid = '" . $iapid . "'";
+  $sql = "SELECT rid FROM {islandora_attachment_permission_roles} WHERE rbid = '" . $iapid . "'";
   $results = db_query($sql);
 
   while ($RID = db_result($results)) { // Get the next result, which will/must always be a single field
-    $sql2 = "SELECT name FROM {role} WHERE rbid = '" . $RID . "'";
+    $sql2 = "SELECT name FROM {role} WHERE rid = '" . $RID . "'";
     $role_result = db_query($sql2);
     $role_name = db_result($role_result);
     $result[] = $role_name;
@@ -952,6 +972,16 @@ function islandora_upload_permissions_form() {
  * Notice, it takes one argument, the $form_state
  */
 function islandora_upload_file_permission_form($form_state) {
+  global $user;
+  // Get Node ID from url
+  // url example ?q=node/islandora_file_permissions/22
+  // arg(0) = node, arg(1) = islandora_file_permissions, arg(2) = 22
+  if (arg(1) == 'islandora_file_permissions' && is_numeric(arg(2))) {
+    $node_id = check_plain(arg(2)); // Grab NID from URL
+  }
+  //get node owner
+  $results_node_owner = db_query("SELECT uid FROM {node} WHERE nid = %d", $node_id);
+  $node_ownerid = db_result($results_node_owner);
 
   // Load fedora_item.inc from the fedora_repository module in the api folder.
   module_load_include('inc', 'fedora_repository', 'api/fedora_item');
@@ -960,98 +990,122 @@ function islandora_upload_file_permission_form($form_state) {
     //if($_POST['files'] == "all");
     //set for all files
     //set a success message so user knows their permission choice was saved.
-    drupal_set_message("The selected access permission has been applied to .", 'status');
     print_r($_POST);
-    //$_POST['users']
-    //$_POST['roles']
-    //$_POST['permission_radios']
+    $permission_radio =  check_plain($_POST['permission_radios']);
     $remove_path = base_path() . "?q=filepermissions/get/";
     $object_pid = str_replace($remove_path, "", check_plain($_POST['files'])); //string replace to get the file pid
-    //grab pid and id
-    //query permissions
-    //if results
-      //$exists = TRUE;
-     //else $exists = FALSE;
-       //empty roles DB and USER DB
-        switch ($permission_radios)  {
+    $fedora_item_temp = new Fedora_Item($object_pid);
+    if ($fedora_item_temp->exists()) {
+        $results_check = db_query("SELECT iapid, public_permission, private_permission FROM {islandora_attachment_permissions} WHERE pid = '%s'", $object_pid);
+        if ($row = db_fetch_object($results_check)) {
+          $iapid = $row->iapid;
+          $exists = TRUE;
+        }
+        else {
+          $iapid = "";
+          $exists = FALSE;
+        }
+      $label = $fedora_item_temp->objectProfile->objLabel;
+      $message = "The selected access permission has been applied to " . $label . ".";
+      drupal_set_message(check_plain($message), 'status');
+      //  Master Switch to control how to save permissions based on radio input
+      // 0 - public, 1 - private, 2 - Role Based, 3 - User Based
+      // Admin role access is granted by Xacml by default
+      // Have to always add current user + node owner
+        switch ($permission_radio)  {
           case '0':
             if ($exists) {
+              //delete queries to clear out roles and users
+              db_query("DELETE FROM {islandora_attachment_permission_users} WHERE ubid = '%d' ", $iapid);
+              db_query("DELETE FROM {islandora_attachment_permission_roles} WHERE rbid = '%d' ", $iapid);
               //update query
+              db_query("UPDATE {islandora_attachment_permissions} SET public_permission = 1, private_permission = 0 WHERE pid = '%s' ", $object_pid);
+              //Remove other XACML
+              islandora_upload_purge_xacml_policy($object_pid, $user->uid);
             }
             else {
+              //Set permissions to public - public objects have no XACML
               //insert query
+              db_query("INSERT INTO {islandora_attachment_permissions} (public_permission, private_permission, pid) VALUES (1, 0, '%s')", $object_pid);
             }
             break;
+
           case '1':
             if ($exists) {
+              //delete queries to clear out roles and users
+              db_query("DELETE FROM {islandora_attachment_permission_users} WHERE ubid = '%d' ", $iapid);
+              db_query("DELETE FROM {islandora_attachment_permission_roles} WHERE rbid = '%d' ", $iapid);
               //update query
+              db_query("UPDATE {islandora_attachment_permissions} SET public_permission = 0, private_permission = 1 WHERE pid = '%s' ", $object_pid);
+
             }
             else {
               //insert query
+              db_query("INSERT INTO {islandora_attachment_permissions} (public_permission, private_permission, pid) VALUES (0, 1, '%s')", $object_pid);
+              $result_iapid = db_query("SELECT iapid FROM {islandora_attachment_permissions} WHERE pid = '%s'", $object_pid);
+              $iapid = db_result($result_iapid);
             }
+            islandora_upload_create_xacml_policy_private($object_pid, $user->uid, $node_ownerid);
             break;
+
           case '2':
             if  ($exists) {
+              //delete queries to clear out roles and users
+              db_query("DELETE FROM {islandora_attachment_permission_users} WHERE ubid = '%d' ", $iapid);
+              db_query("DELETE FROM {islandora_attachment_permission_roles} WHERE rbid = '%d' ", $iapid);
               //update query
-              if (isset($_POST['roles'])) {
-                //for each $_POST['roles']
-                //insert into permission_roles id, rid
-              }
-
+              db_query("UPDATE {islandora_attachment_permissions} SET public_permission = 0, private_permission = 0 WHERE pid = '%s' ", $object_pid);
             }
             else {
               //insert query
-
-              //select query to get ID
-              if (isset($_POST['roles'])) {
-                //for each $_POST['roles']
-                //insert into permission_roles id, rid
+              db_query("INSERT INTO {islandora_attachment_permissions} (public_permission, private_permission, pid) VALUES (0, 0, '%s')", $object_pid);
+              //select query to get new ID
+              $result_iapid = db_query("SELECT iapid FROM {islandora_attachment_permissions} WHERE pid = '%s'", $object_pid);
+              $iapid = db_result($result_iapid);
+            }
+            //insert checked roles
+            if (isset($_POST['roles'])) {
+              foreach ($_POST['roles'] as $value) {
+                //insert query
+                db_query("INSERT INTO {islandora_attachment_permission_roles} (rbid, rid) VALUES ('%d','%d')", $iapid,  check_plain($value));
               }
             }
-
+            islandora_upload_create_xacml_policy_roles($object_pid, $user->uid, $node_ownerid);
             break;
+
           case '3':
             if ($exists) {
+              //delete queries to clear out roles and users
+              db_query("DELETE FROM {islandora_attachment_permission_users} WHERE ubid = '%d' ", $iapid);
+              db_query("DELETE FROM {islandora_attachment_permission_roles} WHERE rbid = '%d' ", $iapid);
               //update query
-              if (isset($_POST['users'])) {
-                //for each $_POST['users']
-                 //insert into permission_users id, uid
-              }
-
+              db_query("UPDATE {islandora_attachment_permissions} SET public_permission = 0, private_permission = 0 WHERE pid = '%s' ", $object_pid);
             }
             else {
               //insert query
-
-              //select query to get ID
-              if (isset($_POST['users'])) {
-                //for each $_POST['users']
-                 //insert into permission_users id, uid
+              db_query("INSERT INTO {islandora_attachment_permissions} (public_permission, private_permission, pid) VALUES (0, 0, '%s')", $object_pid);
+              //select query to get new ID
+              $result_iapid = db_query("SELECT iapid FROM {islandora_attachment_permissions} WHERE pid = '%s'", $object_pid);
+              $iapid = db_result($result_iapid);
+            }
+            //insert checked users
+            if (isset($_POST['users'])) {
+              foreach ($_POST['users'] as $value) {
+                //insert query
+                db_query("INSERT INTO {islandora_attachment_permission_users} (ubid, uid) VALUES ('%d','%d')", $iapid,  check_plain($value));
               }
             }
+            islandora_upload_create_xacml_policy_users($object_pid, $user->uid, $node_ownerid);
             break;
           }
-
+    }
     //unset so file is unselected - otherwise the Ajax will not load until you browse off that object and it
     //will not pull the users and roles.
     unset($_POST['files']);
   }
-  else {
-    //need to set a default to public incase user just clicked finished and didn't manually assign permissions
-    // but only if there isn't already a permission for that file
-
-    //for each file get pid
-      //query permissions table with PID=PID
-        //if !result
-          //insert new record with public permissions
-  }
   drupal_add_js(drupal_get_path('module', 'islandora_upload') . '/permission_selectbox.js');
   drupal_add_css(drupal_get_path('module', 'islandora_upload') .'/islandora_upload.css');
 
-  // url example ?q=node/islandora_file_permissions/22
-  // arg(0) = node, arg(1) = islandora_file_permissions, arg(2) = 22
-  if (arg(1) == 'islandora_file_permissions' && is_numeric(arg(2))) {
-    $node_id = arg(2); // Grab NID from URL
-  }
   $results = db_query("SELECT pid FROM {node_fedora_objects} WHERE nid = %d", $node_id);
   $file_array = array();
   $file_array['0'] = ""; //white space for first record of the drop down.
@@ -1061,6 +1115,11 @@ function islandora_upload_file_permission_form($form_state) {
     $fedora_item = new Fedora_Item($row->pid);
     $label = $fedora_item->objectProfile->objLabel;
     $file_array[base_path() . "?q=filepermissions/get/" . $row->pid] = $label;
+    $perm_check = db_query("SELECT iapid FROM {islandora_attachment_permissions} WHERE pid = '%s'", $row->pid);
+    if (!db_fetch_object($perm_check)) {
+      //Set permissions to public - public objects have no XACML
+      db_query("INSERT INTO {islandora_attachment_permissions} (public_permission, private_permission, pid) VALUES (1, 0, '%s')", $row->pid);
+    }
   }
   $form['description'] = array(
     '#id' => 'islandora_files_description',
@@ -1119,6 +1178,7 @@ function islandora_upload_file_permission_form($form_state) {
   );
   return $form;
 }
+
 function islandora_upload_get_by_file_id($fedora_pid) {
   //string pad variables for better spacings
   $items = array();
@@ -1131,10 +1191,16 @@ function islandora_upload_get_by_file_id($fedora_pid) {
   //get owner id of the file
   $ownerID = "";
   $radio_option = 0;
+  $node_ownerid = "";
 
-  $results = db_query("SELECT ownerid FROM {node_fedora_objects} WHERE pid = '%s'", $fedora_pid);
-  if ($owner = db_result($results)) {
-    $ownerID = $owner;
+  $results = db_query("SELECT ownerid, nid FROM {node_fedora_objects} WHERE pid = '%s'", $fedora_pid);
+  if ($row_setup = db_fetch_object($results)) {
+    $ownerID = $row_setup->ownerid;
+    $nid = $row_setup->nid;
+    $result_node_owner = db_query("SELECT uid FROM {node} WHERE nid = %d", $nid);
+    if ($row_node_owner = db_fetch_object($result_node_owner)) {
+      $node_ownerid = $row_node_owner->uid;
+    }
   }
 
   //get binding id and then get all user / roles if they exists
@@ -1179,7 +1245,12 @@ function islandora_upload_get_by_file_id($fedora_pid) {
   }
   //get user count
   $count_users = 0;
-  $results = db_query("SELECT count(uid) FROM {users} where uid NOT IN (0, %d)", $ownerID);
+  if ($node_ownerid == $ownerID) {
+    $results = db_query("SELECT count(uid) FROM {users} where uid NOT IN (0, %d)", $ownerID);
+  }
+  else {
+    $results = db_query("SELECT count(uid) FROM {users} where uid NOT IN (0, %d, %d)", $ownerID, $node_ownerid);
+  }
   if ($count_rows = db_result($results)) {
     $count_users = $count_rows;
   }
@@ -1218,7 +1289,12 @@ function islandora_upload_get_by_file_id($fedora_pid) {
     'owner_id' => $ownerID,
     'debug' => $radio_button);
 
-  $results = db_query("SELECT uid, name FROM {users} where uid NOT IN (0,%d)", $ownerID);
+  if ($node_ownerid == $ownerID) {
+    $results = db_query("SELECT uid, name FROM {users} where uid NOT IN (0, %d)", $ownerID);
+  }
+  else {
+    $results = db_query("SELECT uid, name FROM {users} where uid NOT IN (0, %d, %d)", $ownerID, $node_ownerid);
+  }
   while ($row = db_fetch_object($results)) {
     //if current user is one of the saved users send checked = TRUE so the JS checkes the box on load
     if (array_key_exists($row->uid, $checked_user_array) ) {
@@ -1229,7 +1305,7 @@ function islandora_upload_get_by_file_id($fedora_pid) {
     }
     $items[] = array(
       'data' => $row->name,
-      'id' => $row->uid,
+      'id_value' => $row->uid,
       'checked' => $checked,
       'debug' => "debug message user");
   }
@@ -1247,7 +1323,7 @@ function islandora_upload_get_by_file_id($fedora_pid) {
 
     $items[] = array(
       'data' => $row->name,
-      'id' => $row->rid,
+      'id_value' => $row->rid,
       'checked' => $checked,
       'owner' =>  FALSE,
       'debug' => "debug message role");
@@ -1256,4 +1332,152 @@ function islandora_upload_get_by_file_id($fedora_pid) {
 // create a JSON object. The object will contain a property named “products” that will be set with the $items variable.
   echo json_encode($items);
   exit;
+}
+
+/**
+ * Generates and Attaches XACML Policy to specificied PID using Owner and Node Owner.
+ *
+ *  @param pid
+ *  Object PID
+ *  @param uid
+ *  Current User's Id - get name and set to management
+ *  @param node_ownerid
+ *  Node Owner's id - get name and set to management
+ *
+ */
+function islandora_upload_create_xacml_policy_private($pid, $uid, $node_ownerid) {
+  $sql = "SELECT name FROM {users} WHERE uid = '" . $uid . "'";
+  $user_result = db_query($sql);
+  $user_name = db_result($user_result);
+  //Only need node owner if it is a different user
+  if ($uid != $node_ownerid) {
+    $sql2 = "SELECT name FROM {users} WHERE uid = '" . $node_ownerid . "'";
+    $owner_result = db_query($sql2);
+    $owner_name = db_result($owner_result);
+  }
+  else {
+    $owner_name = "";
+  }
+  //Generate XACML
+
+  //Attach XACML
+  $fedora_item = new Fedora_Item($pid);
+  if ($fedora_item->exists()) {
+    $datastream_array = $fedora_item->get_datastreams_list_as_array();
+    if (array_key_exists('POLICY', $datastream_array)) {
+      //$fedora_item->modify_datastream_by_value($xml, 'POLICY', 'Xacml Policy Stream', 'text/xml');
+    }
+    else {
+      //$fedora_item->add_datastream_from_string($xml, 'POLICY', 'Xacml Policy Stream', 'text/xml', 'X');
+    }
+  }
+}
+
+/**
+ * Generates and Attaches XACML Policy to specificied PID using Users.
+ *
+ *  @param pid
+ *  Object PID
+ *  @param uid
+ *  Current User's Id - get name and set to management
+ *  @param node_ownerid
+ *  Node Owner's id - get name and set to management
+ *
+ */
+function islandora_upload_create_xacml_policy_users($pid, $uid, $node_ownerid) {
+  // Load fedora_item.inc from the fedora_repository module in the api folder.
+  module_load_include('inc', 'fedora_repository', 'api/fedora_item');
+
+  $sql = "SELECT name FROM {users} WHERE uid = '" . $uid . "'";
+  $user_result = db_query($sql);
+  $user_name = db_result($user_result);
+  //Only need node owner if it is a different user
+  if ($uid != $node_ownerid) {
+    $sql2 = "SELECT name FROM {users} WHERE uid = '" . $node_ownerid . "'";
+    $owner_result = db_query($sql2);
+    $owner_name = db_result($owner_result);
+  }
+  else {
+    $owner_name = "";
+  }
+  $fedora_item = new Fedora_Item($pid);
+  if ($fedora_item->exists()) {
+    //Get Users - returns an array of user names or null if the table is empty
+    $users = get_file_accessable_users($pid);
+    //Generate XACML
+
+    //Attach XACML
+    $datastream_array = $fedora_item->get_datastreams_list_as_array();
+    if (array_key_exists('POLICY', $datastream_array)) {
+      //$fedora_item->modify_datastream_by_value($xml, 'POLICY', 'Xacml Policy Stream', 'text/xml');
+    }
+    else {
+      //$fedora_item->add_datastream_from_string($xml, 'POLICY', 'Xacml Policy Stream', 'text/xml', 'X');
+    }
+  }
+}
+
+/**
+ * Generates and Attaches XACML Policy to specificied PID using Roles.
+ *
+ *  @param pid
+ *  Object PID
+ *  @param uid
+ *  Current User's Id - get name and set to management
+ *  @param node_ownerid
+ *  Node Owner's id - get name and set to management
+ *
+ */
+function islandora_upload_create_xacml_policy_roles($pid, $uid, $node_ownerid) {
+  // Load fedora_item.inc from the fedora_repository module in the api folder.
+  module_load_include('inc', 'fedora_repository', 'api/fedora_item');
+
+  $sql = "SELECT name FROM {users} WHERE uid = '" . $uid . "'";
+  $user_result = db_query($sql);
+  $user_name = db_result($user_result);
+  //Only need node owner if it is a different user
+  if ($uid != $node_ownerid) {
+    $sql2 = "SELECT name FROM {users} WHERE uid = '" . $node_ownerid . "'";
+    $owner_result = db_query($sql2);
+    $owner_name = db_result($owner_result);
+  }
+  else {
+    $owner_name = "";
+  }
+  $fedora_item = new Fedora_Item($pid);
+  if ($fedora_item->exists()) {
+    //Get Roles - returns an array of role names or null if the table is empty
+    $roles = get_file_accessable_roles($pid);
+    //Generate XACML
+
+    //Attach XACML
+    $datastream_array = $fedora_item->get_datastreams_list_as_array();
+    if (array_key_exists('POLICY', $datastream_array)) {
+      //$fedora_item->modify_datastream_by_value($xml, 'POLICY', 'Xacml Policy Stream', 'text/xml');
+    }
+    else {
+      //$fedora_item->add_datastream_from_string($xml, 'POLICY', 'Xacml Policy Stream', 'text/xml', 'X');
+    }
+  }
+}
+
+/**
+ * Generates and Attaches XACML Policy to specificied PID using.
+ *
+ *  @param pid
+ *  Object PID
+ *
+ */
+function islandora_upload_purge_xacml_policy($pid, $uid) {
+  // Load fedora_item.inc from the fedora_repository module in the api folder.
+  module_load_include('inc', 'fedora_repository', 'api/fedora_item');
+  $fedora_item = new Fedora_Item($pid);
+  if ($fedora_item->exists()) {
+    $datastream_array = $fedora_item->get_datastreams_list_as_array();
+    if (array_key_exists('POLICY', $datastream_array)) {
+      $log_message = "Object has been set to public by user {" . $uid . "}.";
+      $fedora_item->purge_datastream('POLICY', NULL, NULL, $log_message);
+    }
+  }
+
 }
