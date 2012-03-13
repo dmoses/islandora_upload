@@ -359,12 +359,7 @@ function obj_access($pid) {
   global $user;
   $access = FALSE;
   $checkUser = $user->name;
-
-  if (is_string($priv)) {
-    if ($checkUser == $priv) {
-      $access = TRUE;
-    }
-  }
+  $owner = get_file_owner_name($pid);
   $results = db_query("SELECT nid FROM {node_fedora_objects} WHERE pid = '%s'", $pid);
   $nid = db_result($results);
 
@@ -560,7 +555,7 @@ function islandora_upload_form_alter(&$form, $form_state, $form_id) {
 
 function islandora_upload_nodeapi(&$node, $op, $teaser = NULL) {
   global $user;
-   switch ($op) {
+  switch ($op) {
 
     case 'load':
       $output = '';
@@ -580,7 +575,7 @@ function islandora_upload_nodeapi(&$node, $op, $teaser = NULL) {
             $node->content['islandora_files'] = array(
               '#value' => theme('islandora_upload_attachments', $node->islandora_files),
               '#weight' => 50,
-             );
+            );
           }
         }
       }
@@ -691,7 +686,7 @@ function islandora_upload_save(&$node, $uid) {
         $fedora_item = new Fedora_Item($file->pid);
         if  ($fedora_item->exists())  {
           $log_message = "User {" . $uid . "} has removed the object from the associated node.";
-          if (empty($file->pid)) { //TODO - add user check to who has permission to purge
+          if (obj_manage($file->pid)) { //TODO - add user check to who has permission to purge
             $fedora_item->purge($log_message, TRUE); //remove the fedora object
           }
           else {
@@ -727,7 +722,7 @@ function islandora_upload_save(&$node, $uid) {
 
       // Params for ingest_new_item($pid = '', $state = 'A', $label = '', $owner = '')
       // IMPORTANT NOTE: THE OBJ AND PID LABEL SHOULD ALWAYS MATCH
-      $fedora_item = Fedora_Item::ingest_new_item(Fedora_Item::get_next_PID_in_namespace("islandora"), 'A', $file->description,$user->name);
+      $fedora_item = Fedora_Item::ingest_new_item(Fedora_Item::get_next_PID_in_namespace("islandora"), 'A', $file->description, $user->name);
       $fedora_item->add_datastream_from_file($file->filepath, "OBJ", $file->filename);
       $fedora_item->add_relationship("fedora:isMemberOfCollection", "islandora:sp_generic_collection");
 
@@ -1009,19 +1004,18 @@ module_load_include('inc', 'fedora_repository', 'api/fedora_utils');
   $results = db_result($results);
 
   if ($results == 1) {
-  $fedora_item = new Fedora_Item($pid);
+    $fedora_item = new Fedora_Item($pid);
+    if ($fedora_item->exists()) {
+      $url = variable_get('fedora_base_url', 'http://localhost:8080/fedora');
 
-  if ($fedora_item->exists()) {
-  $url = variable_get('fedora_base_url', 'http://localhost:8080/fedora');
+      $url .= "/objects?terms=$pid&ownerId=true&resultFormat=xml";
 
-  $url .= "/objects?terms=$pid&ownerId=true&resultFormat=xml";
-
-  $resultxml = do_curl($url);
-  $resultelements = simplexml_load_string($resultxml);
-   if (!empty($resultelements)) {
-   $result = (string) $resultelements->resultList->objectFields->ownerId;
-   }
-  }
+      $resultxml = do_curl($url);
+      $resultelements = simplexml_load_string($resultxml);
+      if (!empty($resultelements)) {
+        $result = (string) $resultelements->resultList->objectFields->ownerId;
+      }
+    }
   }
   return $result;
 }
@@ -1056,7 +1050,7 @@ function get_file_accessable_users($pid) {
     $user_result = db_query($sql2);
 
     $user_name = db_result($user_result);
-	$result[] = $user_name;
+    $result[] = $user_name;
   }
 
   if (empty($result)) {
@@ -1179,8 +1173,8 @@ function islandora_upload_file_permission_form($form_state) {
               db_query("UPDATE {islandora_attachment_permissions} SET public_permission = 1, private_permission = 0 WHERE pid = '%s' ", $object_pid);
               //Remove other XACML
               //islandora_upload_purge_xacml_policy($object_pid, $user->uid);
-			  islandora_upload_create_xacml_policy_public($object_pid, $user-> uid, $node_ownerid);
-			  }
+              islandora_upload_create_xacml_policy_public($object_pid, $user-> uid, $node_ownerid);
+            }
             else {
               //Set permissions to public - public objects have no XACML
               //insert query
@@ -1271,12 +1265,14 @@ function islandora_upload_file_permission_form($form_state) {
   while ($row = db_fetch_object($results)) {
     //get fedora label for pid
     $fedora_item = new Fedora_Item($row->pid);
-    $label = $fedora_item->objectProfile->objLabel;
-    $file_array[base_path() . "?q=filepermissions/get/" . $row->pid] = $label;
-    $perm_check = db_query("SELECT iapid FROM {islandora_attachment_permissions} WHERE pid = '%s'", $row->pid);
-    if (!db_fetch_object($perm_check)) {
-      //Set permissions to public - public objects have no XACML
-      db_query("INSERT INTO {islandora_attachment_permissions} (public_permission, private_permission, pid) VALUES (1, 0, '%s')", $row->pid);
+    if($fedora_item->exists() && obj_manage($row->pid)) {
+      $label = $fedora_item->objectProfile->objLabel;
+      $file_array[base_path() . "?q=filepermissions/get/" . $row->pid] = $label;
+      $perm_check = db_query("SELECT iapid FROM {islandora_attachment_permissions} WHERE pid = '%s'", $row->pid);
+      if (!db_fetch_object($perm_check)) {
+        //Set permissions to public - public objects have no XACML
+        db_query("INSERT INTO {islandora_attachment_permissions} (public_permission, private_permission, pid) VALUES (1, 0, '%s')", $row->pid);
+      }
     }
   }
   $form['description'] = array(
@@ -1454,6 +1450,15 @@ function islandora_upload_get_by_file_id($fedora_pid) {
     $results = db_query("SELECT uid, name FROM {users} WHERE uid NOT IN (0, %d, %d)", $ownerID, $node_ownerid);
   }
   while ($row = db_fetch_object($results)) {
+    $add_user = TRUE;
+    //check to see if the user has the administrators role
+    //if they do skip them because they always have management and viewing rights
+    $query = db_query("SELECT r.name FROM {role} r INNER JOIN {users_roles} u ON u.rid = r.rid WHERE r.name = 'administrators' AND u.uid = %d", $row->uid);
+    if ($admin_check = db_result($query)) {
+      $add_user = FALSE;
+      $count_users--; //subtrack one from the number of returned users
+    }
+
     //if current user is one of the saved users send checked = TRUE so the JS checkes the box on load
     if (array_key_exists($row->uid, $checked_user_array) ) {
       $checked = TRUE;
@@ -1461,14 +1466,16 @@ function islandora_upload_get_by_file_id($fedora_pid) {
     else {
       $checked = FALSE;
     }
-    $items[] = array(
-      'data' => $row->name,
-      'id_value' => $row->uid,
-      'checked' => $checked,
-      'debug' => "debug message user");
+    if($add_user) {
+      $items[] = array(
+        'data' => $row->name,
+        'id_value' => $row->uid,
+        'checked' => $checked,
+        'debug' => "debug message user");
+    }
   }
 
-  $results = db_query("SELECT rid, name FROM {role}");
+  $results = db_query("SELECT rid, name FROM {role} WHERE name <> 'administrators'");
   while ($row = db_fetch_object($results)) {
 
     //if role is one of the saved roles send checked = TRUE so the JS checkes the box on load
@@ -1486,19 +1493,30 @@ function islandora_upload_get_by_file_id($fedora_pid) {
       'owner' =>  FALSE,
       'debug' => "debug message role");
   }
-
-// create a JSON object. The object will contain a property named “products” that will be set with the $items variable.
+  //update number of users because some of them may have been removed since they are admin level users
+  $items['0']['number_of_users'] = $count_users;
+  // create a JSON object. The object will contain a property named “products” that will be set with the $items variable.
   echo json_encode($items);
   exit;
 }
 
+/**
+ * Generates and Attaches XACML Policy to specificied PID using Owner and Node Owner.
+ * For public policy only the owner, node owner and admins are granted management access and there is no restrictions on viewing
+ *  @param pid
+ *  Object PID
+ *  @param uid
+ *  Current User's Id - get name and set to management
+ *  @param node_ownerid
+ *  Node Owner's id - get name and set to management
+ *
+ */
 function islandora_upload_create_xacml_policy_public($pid, $uid, $node_ownerid) {
+  module_load_include('inc', 'fedora_repository', 'api/fedora_item');
+  module_load_include('inc', 'islandora_xacml_api', 'Xacml');
+  module_load_include('inc', 'islandora_xacml_api', 'XacmlException');
 
-module_load_include('inc', 'fedora_repository', 'api/fedora_item');
-	module_load_include('inc', 'islandora_xacml_api', 'Xacml');
-	module_load_include('inc', 'islandora_xacml_api', 'XacmlException');
-
-	$sql = "SELECT name FROM {users} WHERE uid = '" . $uid . "'";
+  $sql = "SELECT name FROM {users} WHERE uid = '" . $uid . "'";
   $user_result = db_query($sql);
   $user_name = db_result($user_result);
 
@@ -1515,26 +1533,24 @@ module_load_include('inc', 'fedora_repository', 'api/fedora_item');
   $xacml = new Xacml();
   $xacml->managementRule->addUser($user_name);
 
-
   if (!empty($owner_name)) {
-  $xacml->managementRule->addUser($owner_name);
-
+    $xacml->managementRule->addUser($owner_name);
   }
 
-  $xml = $xacml->getXmlString();
+  $xml = $xacml->getXmlString(); //create the xacml xml
 
   //Attach XACML
   $fedora_item = new Fedora_Item($pid);
   if ($fedora_item->exists()) {
     $datastream_array = $fedora_item->get_datastreams_list_as_array();
     if (array_key_exists('POLICY', $datastream_array)) {
-	  $fedora_item->modify_datastream_by_value($xml, 'POLICY', 'Xacml Policy Stream', 'text/xml');
+      $fedora_item->modify_datastream_by_value($xml, 'POLICY', 'Xacml Policy Stream', 'text/xml');
     }
     else {
-	  $fedora_item->add_datastream_from_string($xml, 'POLICY', 'Xacml Policy Stream', 'text/xml', 'X');
-	   }
+      $fedora_item->add_datastream_from_string($xml, 'POLICY', 'Xacml Policy Stream', 'text/xml', 'X');
+    }
   }
- }
+}
 
 /**
  * Generates and Attaches XACML Policy to specificied PID using Owner and Node Owner.
@@ -1571,11 +1587,11 @@ function islandora_upload_create_xacml_policy_private($pid, $uid, $node_ownerid)
 
 
   if (!empty($owner_name)) {
-  $xacml->managementRule->addUser($owner_name);
-  $xacml->viewingRule->addUser($owner_name);
+    $xacml->managementRule->addUser($owner_name);
+    $xacml->viewingRule->addUser($owner_name);
   }
 
-  $xml = $xacml->getXmlString();
+  $xml = $xacml->getXmlString(); //create the xacml xml
 
 
   //Attach XACML
@@ -1628,19 +1644,17 @@ function islandora_upload_create_xacml_policy_users($pid, $uid, $node_ownerid) {
     //Generate XACML
     $xacml = new Xacml();
 
-
-	$xacml->managementRule->addUser($user_name);
-	//$xacml->viewingRule->addUser($user);
-
-	if (!empty($owner_name)) {
-	$xacml->managementRule->addUser($owner_name);
-	$xacml->viewingRule->addUser($user);
-	}
+    $xacml->managementRule->addUser($user_name);
+    //$xacml->viewingRule->addUser($user);
+    if (!empty($owner_name)) {
+      $xacml->managementRule->addUser($owner_name);
+      $xacml->viewingRule->addUser($user);
+    }
 
     foreach ($users as $user) {
       $xacml->viewingRule->addUser($user);
     }
-    $xml = $xacml->getXmlString();
+    $xml = $xacml->getXmlString(); //create the xacml xml
 
     //Attach XACML
     $datastream_array = $fedora_item->get_datastreams_list_as_array();
@@ -1688,26 +1702,22 @@ function islandora_upload_create_xacml_policy_roles($pid, $uid, $node_ownerid) {
     $roles = get_file_accessable_roles($pid);
 
     //Generate XACML
+    $xacml = new Xacml();
+    $xacml->managementRule->addUser($user_name);
 
-	$xacml = new Xacml();
-	$xacml->managementRule->addUser($user_name);
-
-
-	if (!empty($owner_name)) {
-	$xacml->viewingRule->addUser($owner_name);
-	}
+    if (!empty($owner_name)) {
+      $xacml->viewingRule->addUser($owner_name);
+    }
 
     foreach ($roles as $role) {
-	$xacml->viewingRule->addRole($role);
-	}
-
-	$xml = $xacml->getXmlString();
-
+      $xacml->viewingRule->addRole($role);
+    }
+    $xml = $xacml->getXmlString();
 
     //Attach XACML
     $datastream_array = $fedora_item->get_datastreams_list_as_array();
     if (array_key_exists('POLICY', $datastream_array)) {
-	  $fedora_item->modify_datastream_by_value($xml, 'POLICY', 'Xacml Policy Stream', 'text/xml');
+      $fedora_item->modify_datastream_by_value($xml, 'POLICY', 'Xacml Policy Stream', 'text/xml');
     }
     else {
       $fedora_item->add_datastream_from_string($xml, 'POLICY', 'Xacml Policy Stream', 'text/xml', 'X');
@@ -1723,7 +1733,7 @@ function islandora_upload_create_xacml_policy_roles($pid, $uid, $node_ownerid) {
  *
  */
 function islandora_upload_purge_xacml_policy($pid, $uid) {
- // Load fedora_item.inc from the fedora_repository module in the api folder.
+  // Load fedora_item.inc from the fedora_repository module in the api folder.
   module_load_include('inc', 'fedora_repository', 'api/fedora_item');
   $fedora_item = new Fedora_Item($pid);
   if ($fedora_item->exists()) {
