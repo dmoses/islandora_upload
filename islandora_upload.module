@@ -1458,7 +1458,7 @@ function islandora_upload_get_by_file_id($fedora_pid) {
   module_load_include('inc', 'fedora_repository', 'api/fedora_item');
 
   //string pad variables for better spacings
-  $items = array();
+  $items_array = array();
   $checked_role_array = array();
   $checked_user_array = array();
   $checked_role_array["prechecked-islandora-upload"] = "Array Exists";
@@ -1559,7 +1559,7 @@ function islandora_upload_get_by_file_id($fedora_pid) {
       break;
 
   }
-  $items[] = array(
+  $items_array[] = array(
     'radio_checked' => $radio_option,
     'number_of_users' => $count_users,
     'number_of_roles' => $count_roles,
@@ -1590,7 +1590,7 @@ function islandora_upload_get_by_file_id($fedora_pid) {
       $checked = FALSE;
     }
     if ($add_user) {
-      $items[] = array(
+      $items_array[] = array(
         'data' => $row->name,
         'id_value' => $row->uid,
         'checked' => $checked,
@@ -1609,7 +1609,7 @@ function islandora_upload_get_by_file_id($fedora_pid) {
       $checked = FALSE;
     }
 
-    $items[] = array(
+    $items_array[] = array(
       'data' => $row->name,
       'id_value' => $row->rid,
       'checked' => $checked,
@@ -1617,9 +1617,9 @@ function islandora_upload_get_by_file_id($fedora_pid) {
       'debug' => "debug message role");
   }
   //update number of users because some of them may have been removed since they are admin level users
-  $items['0']['number_of_users'] = $count_users;
-  // create a JSON object. The object will contain a property named “products” that will be set with the $items variable.
-  echo json_encode($items);
+  $items_array['0']['number_of_users'] = $count_users;
+  // create a JSON object. The object will contain a property named “products” that will be set with the $items_array variable.
+  echo json_encode($items_array);
   exit;
 }
 
