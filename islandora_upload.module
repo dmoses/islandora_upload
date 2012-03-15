@@ -37,31 +37,31 @@ function islandora_upload_theme() {
  * Implementation of hook_link().
  */
 /*
-function islandora_upload_link($type, $node = NULL, $teaser = FALSE) {
-  $links = array();
+  function islandora_upload_link($type, $node = NULL, $teaser = FALSE) {
+    $links = array();
 
-  // Display a link with the number of attachments
-  if ($teaser && $type == 'node' && isset($node->islandora_files) && user_access('view attached files')) {
-    $num_files = 0;
-    unset($node->islandora_files);
-    $node->islandora_files = islandora_get_PIDs($node, 'view');
-    foreach ($node->islandora_files as $file) {
-      if ($file->list) {
-        $num_files++;
+    // Display a link with the number of attachments
+    if ($teaser && $type == 'node' && isset($node->islandora_files) && user_access('view attached files')) {
+      $num_files = 0;
+      unset($node->islandora_files);
+      $node->islandora_files = islandora_get_PIDs($node, 'view');
+      foreach ($node->islandora_files as $file) {
+        if ($file->list) {
+          $num_files++;
+        }
+      }
+      if ($num_files) {
+        $links['islandora_upload_attachments'] = array(
+          'title' => format_plural($num_files, '1 attachment', '@count attachments'),
+          'href' => "node/$node->nid",
+          'attributes' => array('title' => t('Read full article to view attachments.')),
+          'fragment' => 'attachments'
+        );
       }
     }
-    if ($num_files) {
-      $links['islandora_upload_attachments'] = array(
-        'title' => format_plural($num_files, '1 attachment', '@count attachments'),
-        'href' => "node/$node->nid",
-        'attributes' => array('title' => t('Read full article to view attachments.')),
-        'fragment' => 'attachments'
-      );
-    }
+    return $links;
   }
-  return $links;
-}
-*/
+ */
 
 /**
  * Implementation of hook_perm().
@@ -126,7 +126,6 @@ function islandora_upload_grant_view_access() {
   }
   $fedora_item = new Fedora_Item($pid);
   if ($fedora_item->exists()) {
-
     if (obj_access($pid)) {
       $path = 'fedora/repository/'. $pid .'/OBJ/';
       drupal_goto($path);
@@ -142,9 +141,9 @@ function islandora_upload_grant_view_access() {
   }
 }
 
-//function islandora_upload_menu_alter(&$items) {
-//  $items['system/files']['access arguments'] = array('view attached files');
-//}
+function islandora_upload_menu_alter(&$items) {
+  $items['system/files']['access arguments'] = array('view attached files');
+}
 
 /**
  * Theme the attachments list.
@@ -473,6 +472,12 @@ function obj_manage($pid) {
   if ($checkUser == 'admin' || $checkUser == $nOwner) {
     $access = TRUE;
   }
+
+  if (!empty($user->roles)) {
+    if (in_array('administrators', $user->roles)) {
+      $access = TRUE;
+    }
+  }
   return $access;
 }
 
@@ -505,6 +510,11 @@ function can_user_access_delete($nid) {
     $access = TRUE;
   }
 
+  if (!empty($user->roles)) {
+    if (in_array('administrators', $user->roles)) {
+      $access = TRUE;
+    }
+  }
   return $access;
 }
 
@@ -635,9 +645,31 @@ function islandora_upload_form_alter(&$form, $form_state, $form_id) {
 }
 
 /**
+ * Check if the current user has access to manage the objects if so return true otherwise return false.
+ *
+ * @param $pid
+ *   The object trying to be accessed.
+ */
+function check_user_delete($node) {
+  global $user;
+  $access = FALSE;
+  $checkUser = $user->name;
+
+  $result = db_query("SELECT uid FROM {node} WHERE nid = %d", $node->nid);
+  $uid = db_result($result);
+
+  $results = db_query("SELECT name FROM {users} WHERE uid = %d". $uid);
+  $nOwner = db_result($results);
+
+  if ($checkUser == 'admin' || $checkUser == $nOwner) {
+    $access = TRUE;
+  }
+  return $access;
+}
+
+/**
  * Implementation of hook_nodeapi().
  */
-
 function islandora_upload_nodeapi(&$node, $op, $teaser = NULL) {
   global $user;
   switch ($op) {
@@ -688,12 +720,12 @@ function islandora_upload_nodeapi(&$node, $op, $teaser = NULL) {
       break;
 
     case 'delete':
-//      if (check_user_delete($user->name)){
-//        islandora_upload_purge_fedora_objects($node, $uid);
-//      }
-//      else {
-//        islandora_upload_delete_fedora_objects($node, $uid);
-//      }
+      if (check_user_delete($node)){
+        islandora_upload_purge_fedora_objects($node, $uid);
+      }
+      else {
+        islandora_upload_delete_fedora_objects($node, $uid);
+      }
       break;
   }
 }
@@ -1043,7 +1075,8 @@ function islandora_upload_delete_fedora_objects($node, $uid) {
       $resultelements = simplexml_load_string($resultxml);
       if (!empty($resultelements)) {
         $ownerId = (string) $resultelements->resultList->objectFields->ownerId;
-      } else {
+      }
+      else {
         $ownerId = NULL;
       }
       $log_message = "Node {NID:" . $node->nid . "} created by {UID:" . $node->uid . "} which is associate with this object has been deleted by user {" . $uid . "}.";
@@ -1071,7 +1104,7 @@ function islandora_upload_delete_fedora_objects($node, $uid) {
 function get_file_owner_name($pid) {
   module_load_include('inc', 'fedora_repository', 'api/fedora_item');
   module_load_include('inc', 'fedora_repository', 'api/fedora_utils');
-  $result = "";
+  $result = FALSE;
 
   $fedora_item = new Fedora_Item($pid);
   if ($fedora_item->exists()) {
@@ -1211,14 +1244,13 @@ function islandora_upload_file_permission_form($form_state) {
 
   // Load fedora_item.inc from the fedora_repository module in the api folder.
   module_load_include('inc', 'fedora_repository', 'api/fedora_item');
-
   if ($_POST['op'] == "Save Permissions" && $_POST['files'] != '0') {
     //if($_POST['files'] == "all");
     //set for all files
     //set a success message so user knows their permission choice was saved.
 
     $permission_radio =  check_plain($_POST['permission_radios']);
-    $remove_path = base_path() . "?q=filepermissions/get/";
+    $remove_path = "?q=filepermissions/get/";
     $object_pid = str_replace($remove_path, "", check_plain($_POST['files'])); //string replace to get the file pid
     $fedora_item_temp = new Fedora_Item($object_pid);
     if ($fedora_item_temp->exists()) {

@@ -37,31 +37,31 @@ function islandora_upload_theme() {
  * Implementation of hook_link().
  */
 /*
-function islandora_upload_link($type, $node = NULL, $teaser = FALSE) {
-  $links = array();
+  function islandora_upload_link($type, $node = NULL, $teaser = FALSE) {
+    $links = array();
 
-  // Display a link with the number of attachments
-  if ($teaser && $type == 'node' && isset($node->islandora_files) && user_access('view attached files')) {
-    $num_files = 0;
-    unset($node->islandora_files);
-    $node->islandora_files = islandora_get_PIDs($node, 'view');
-    foreach ($node->islandora_files as $file) {
-      if ($file->list) {
-        $num_files++;
+    // Display a link with the number of attachments
+    if ($teaser && $type == 'node' && isset($node->islandora_files) && user_access('view attached files')) {
+      $num_files = 0;
+      unset($node->islandora_files);
+      $node->islandora_files = islandora_get_PIDs($node, 'view');
+      foreach ($node->islandora_files as $file) {
+        if ($file->list) {
+          $num_files++;
+        }
+      }
+      if ($num_files) {
+        $links['islandora_upload_attachments'] = array(
+          'title' => format_plural($num_files, '1 attachment', '@count attachments'),
+          'href' => "node/$node->nid",
+          'attributes' => array('title' => t('Read full article to view attachments.')),
+          'fragment' => 'attachments'
+        );
       }
     }
-    if ($num_files) {
-      $links['islandora_upload_attachments'] = array(
-        'title' => format_plural($num_files, '1 attachment', '@count attachments'),
-        'href' => "node/$node->nid",
-        'attributes' => array('title' => t('Read full article to view attachments.')),
-        'fragment' => 'attachments'
-      );
-    }
+    return $links;
   }
-  return $links;
-}
-*/
+ */
 
 /**
  * Implementation of hook_perm().
@@ -126,7 +126,6 @@ function islandora_upload_grant_view_access() {
   }
   $fedora_item = new Fedora_Item($pid);
   if ($fedora_item->exists()) {
-
     if (obj_access($pid)) {
       $path = 'fedora/repository/'. $pid .'/OBJ/';
       drupal_goto($path);
@@ -142,9 +141,9 @@ function islandora_upload_grant_view_access() {
   }
 }
 
-//function islandora_upload_menu_alter(&$items) {
-//  $items['system/files']['access arguments'] = array('view attached files');
-//}
+function islandora_upload_menu_alter(&$items) {
+  $items['system/files']['access arguments'] = array('view attached files');
+}
 
 /**
  * Theme the attachments list.
@@ -695,37 +694,6 @@ function islandora_upload_nodeapi(&$node, $op, $teaser = NULL) {
 //        islandora_upload_delete_fedora_objects($node, $uid);
 //      }
       break;
-
-    case 'search result': //TODO - change code
-      return isset($node->islandora_files) && is_array($node->islandora_files) ? format_plural(count($node->islandora_files), '1 attachment', '@count attachments') : NULL;
-
-    case 'rss item':
-      if (is_array($node->islandora_files)) {
-        $files = array();
-        foreach ($node->islandora_files as $file) {
-          if ($file->pid) {
-            if (obj_access($file->pid)) {
-              $files[] = $file;
-            }
-          }
-        }
-        //TODO Test
-        if (count($files) > 0) {
-          // RSS only allows one enclosure per item
-          $file = array_shift($files);
-          return array(
-            array(
-              'key' => 'enclosure',
-              'attributes' => array(
-                'url' => file_create_url($file->filepath),
-                'length' => $file->filesize,
-                'type' => $file->filemime
-              )
-            )
-          );
-        }
-      }
-      return array();
   }
 }
 
@@ -794,7 +762,7 @@ function islandora_upload_save(&$node, $uid) {
               $ownerID = (string) $resultelements->resultList->objectFields->ownerId;
             }
             else {
-              $ownerId = $node->uid; //The object owner is the node owner. //TODO - find out wtf is happening
+              $ownerId = NULL;
             }
             $state = "D";
             $label = $fedora_item->objectProfile->objLabel; // needs to be filled in with objects label.
@@ -993,6 +961,7 @@ function islandora_upload_js() {
 function islandora_upload_delete_fedora_object_datastreams($node, $uid) {
   // Load fedora_item.inc from the fedora_repository module in the api folder.
   module_load_include('inc', 'fedora_repository', 'api/fedora_item');
+  module_load_include('inc', 'fedora_repository', 'api/fedora_utils');
   //Grab all pid attached to the drupal node
   $sql = "SELECT pid FROM {node_fedora_objects} WHERE nid = '" . $node->nid . "'";
   $results = db_query($sql);
@@ -1057,6 +1026,7 @@ function islandora_upload_purge_fedora_objects($node, $uid) {
 function islandora_upload_delete_fedora_objects($node, $uid) {
   // Load fedora_item.inc from the fedora_repository module in the api folder.
   module_load_include('inc', 'fedora_repository', 'api/fedora_item');
+  module_load_include('inc', 'fedora_repository', 'api/fedora_utils');
   //Grab all pid attached to the drupal node
   $sql = "SELECT pid FROM {node_fedora_objects} WHERE nid = '" . $node->nid . "'";
   $results = db_query($sql);
@@ -1066,7 +1036,16 @@ function islandora_upload_delete_fedora_objects($node, $uid) {
     if  ($fedora_item->exists())  {
       $state = "D";
       $label = $fedora_item->objectProfile->objLabel; // needs to be filled in with objects label.
-      $ownerId = $node->uid; //The object owner is the node owner.
+      $url = variable_get('fedora_base_url', 'http://localhost:8080/fedora');
+      $url .= "/objects?terms=$pid&ownerId=true&resultFormat=xml";
+      $resultxml = do_curl($url);
+      $resultelements = simplexml_load_string($resultxml);
+      if (!empty($resultelements)) {
+        $ownerId = (string) $resultelements->resultList->objectFields->ownerId;
+      }
+      else {
+        $ownerId = NULL;
+      }
       $log_message = "Node {NID:" . $node->nid . "} created by {UID:" . $node->uid . "} which is associate with this object has been deleted by user {" . $uid . "}.";
       $fedora_item->modify_object($label, $state, $ownerId, $logMessage, TRUE);
     }
@@ -1232,7 +1211,7 @@ function islandora_upload_file_permission_form($form_state) {
 
   // Load fedora_item.inc from the fedora_repository module in the api folder.
   module_load_include('inc', 'fedora_repository', 'api/fedora_item');
-
+  drupal_set_message($_POST);
   if ($_POST['op'] == "Save Permissions" && $_POST['files'] != '0') {
     //if($_POST['files'] == "all");
     //set for all files
