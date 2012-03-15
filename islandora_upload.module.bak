@@ -2,13 +2,7 @@
 /**
  * @file
  *
- *
- *
- *
  */
-
-// Load fedora_item.inc from the fedora_repository module in the api folder.
-module_load_include('inc', 'fedora_repository', 'api/fedora_item');
 
 /**
  * Implementation of hook_help().
@@ -16,10 +10,9 @@ module_load_include('inc', 'fedora_repository', 'api/fedora_item');
 function islandora_upload_help($path, $arg) {
   switch ($path) {
     case 'admin/help#islandora_upload':
-      $output = '<p>'. t('Islandora Upload Module') .'</p>';
+      $output = '<p>'. t('Islandora Upload Module') .'</p>'; //TODO - update text':
+      $output .= '<p>'. t('This module is enabled on any node creation process and allows the user to attach files through a drupal interface but have them ingested and stored in the fedora database.  Upon uploading a file or editing the node a user can set viewing access for the uploaded files only if they are the uploader, node owner or an admin user.  To use this module you most grant the following permissions: ') .'</p>';
       return $output;
-    case 'admin/settings/uploads':
-      return '<p>'. t('Users with the <a href="@permissions">attach files permission</a> can upload attachments. Users with the <a href="@permissions">view attached files permission</a> can view uploaded attachments. You can choose which post types can take attachments on the <a href="@types">content types settings</a> page.', array('@permissions' => url('admin/user/permissions', array('fragment' => 'module-islandora_upload')), '@types' => url('admin/content/types'))) .'</p>';
   }
 }
 
@@ -43,12 +36,15 @@ function islandora_upload_theme() {
 /**
  * Implementation of hook_link().
  */
+/*
 function islandora_upload_link($type, $node = NULL, $teaser = FALSE) {
   $links = array();
 
   // Display a link with the number of attachments
   if ($teaser && $type == 'node' && isset($node->islandora_files) && user_access('view attached files')) {
     $num_files = 0;
+    unset($node->islandora_files);
+    $node->islandora_files = islandora_get_PIDs($node, 'view');
     foreach ($node->islandora_files as $file) {
       if ($file->list) {
         $num_files++;
@@ -63,15 +59,17 @@ function islandora_upload_link($type, $node = NULL, $teaser = FALSE) {
       );
     }
   }
-
   return $links;
 }
+*/
 
 /**
  * Implementation of hook_perm().
+ * The only permission needed is one to control if user can attach files
  */
 function islandora_upload_perm() {
   return array('attach files', 'view attached files', 'upload files');
+  //return array('node attach islandora files', 'node view islandora files'); //TODO - replace permissions with these
 }
 
 /**
@@ -107,13 +105,46 @@ function islandora_upload_menu() {
     'access arguments' => array('attach files'),
     'type' => MENU_CALLBACK
   );
-
+  $items['islandorauploads/file/get'] = array(
+    'title' => 'Request File View Access',
+    'page callback' => 'islandora_upload_grant_view_access',
+    'access arguments' => array('attach files'),
+    'type' => MENU_CALLBACK
+  );
   return $items;
 }
+/**
+ * Ready to implement work around for file access
+ *
+ */
+function islandora_upload_grant_view_access() {
+  module_load_include('inc', 'fedora_repository', 'api/fedora_item');
+  // url example islandorauploads/get/file/islandora:2245
+  // arg(0) = islandorauploads, arg(3) = islandora:2245
+  if (arg(0) == 'islandorauploads') {
+    $pid = check_plain(arg(3)); // Grab UID from URL
+  }
+  $fedora_item = new Fedora_Item($pid);
+  if ($fedora_item->exists()) {
 
-function islandora_upload_menu_alter(&$items) {
-  $items['system/files']['access arguments'] = array('view attached files');
+    if (obj_access($pid)) {
+      $path = 'fedora/repository/'. $pid .'/OBJ/';
+      drupal_goto($path);
+    }
+    else {
+      drupal_set_message("Access Denied", "error");
+      drupal_access_denied();
+    }
+  }
+  else {
+    drupal_set_message("Bad File Request Path", "error");
+    drupal_access_denied();
+  }
 }
+
+//function islandora_upload_menu_alter(&$items) {
+//  $items['system/files']['access arguments'] = array('view attached files');
+//}
 
 /**
  * Theme the attachments list.
@@ -130,7 +161,6 @@ function theme_islandora_upload_form_current($form) {
 
     $row = array('');
     $row[] = drupal_render($form[$key]['remove']);
-    //$row[] = drupal_render($form[$key]['list']);
     $row[] = drupal_render($form[$key]['description']);
     $row[] = drupal_render($form[$key]['weight']);
     $row[] = drupal_render($form[$key]['mimetype']);
@@ -196,17 +226,6 @@ function _islandora_upload_file_limits($user) {
     'resolution' => variable_get('upload_max_resolution', 0),
   );
 }
-/**
- * Check if the current user has access to the objects if so return true otherwise return false.
- *
- * @param $pid
- *   The object trying to be accessed.
- * @param $uid
- *   The user who is trying to access pid.
- */
-function islandora_upload_check_object_access($pid, $uid) {
-  return TRUE;
-}
 
 /**
  * Save new uploads and store them in the session to be associated to the node
@@ -263,7 +282,6 @@ function islandora_upload_node_form_submit(&$form, &$form_state) {
       }
       uasort($form_state['values']['islandora_files'], 'element_sort');
     }
-
   }
 }
 
@@ -275,7 +293,7 @@ function islandora_upload_node_form_submit(&$form, &$form_state) {
  *  Returns the converted file or null and a drupal set message displaying an error that 'OBJ' datastream doesn't exist.
  */
 function islandora_obj_to_file($PID) {
-$file = NULL;
+  $file = NULL;
   module_load_include('inc', 'fedora_repository', 'api/fedora_item');
 
   $fedora_item = new Fedora_Item($PID);
@@ -290,7 +308,11 @@ $file = NULL;
     $path = str_replace($label, '', $path);
 
     $obj = $fedora_item->get_datastream('OBJ');
-    $file->filepath = $path;
+    //this is the direct file path from the obj datastream use this if the xacml is in place to prevent access.
+    //$file->filepath = $path;
+    //use this to go to "hack" function which filters if user should get access
+    //the path could be typed manually at anytime however and full access will be granted.
+    $file->filepath = 'islandorauploads/file/get/' . $PID;
     $file->filename = $obj->label;
     $file->filemime = $obj->MIMEType;
     $file->filesize = $obj->size;
@@ -301,7 +323,10 @@ $file = NULL;
 
   return $file;
 }
-
+/**
+ *  Blocks user from saving if one of the files is missing a label.
+ *
+ */
 function islandora_attachment_validate(&$form, &$form_state) {
   if (!empty($form_state['values']['islandora_files'])) {
     foreach ($form_state['values']['islandora_files'] as $file) {
@@ -342,7 +367,6 @@ function islandora_get_PIDs($node, $state) {
   }
   foreach ($pids as $pid) {
     $fedora_item = new Fedora_Item($pid);
-
       if ($fedora_item->exists()) {
       $tempfile = islandora_obj_to_file($pid);
       if (!empty($tempfile)) {
@@ -353,6 +377,12 @@ function islandora_get_PIDs($node, $state) {
   return $files;
 }
 
+/**
+ * Check if the current user has access to view the objects if so return true otherwise return false.
+ *
+ * @param $pid
+ *   The object trying to be accessed.
+ */
 function obj_access($pid) {
   module_load_include('inc', 'fedora_repository', 'api/fedora_item');
 
@@ -360,8 +390,6 @@ function obj_access($pid) {
   $access = FALSE;
   $checkUser = $user->name;
   $owner = get_file_owner_name($pid);
-  $results = db_query("SELECT nid FROM {node_fedora_objects} WHERE pid = '%s'", $pid);
-  $nid = db_result($results);
 
   if (is_string($owner)) {
     if ($checkUser == $owner) {
@@ -374,7 +402,7 @@ function obj_access($pid) {
   $public = db_result($result);
 
   if ($public == 1) {
-  $access = TRUE;
+    $access = TRUE;
   }
 
   $results = db_query("SELECT nid FROM {node_fedora_objects} WHERE pid = '%s'", $pid);
@@ -415,13 +443,18 @@ function obj_access($pid) {
   return $access;
 }
 
+/**
+ * Check if the current user has access to manage the objects if so return true otherwise return false.
+ *
+ * @param $pid
+ *   The object trying to be accessed.
+ */
 function obj_manage($pid) {
   global $user;
   $access = FALSE;
   $checkUser = $user->name;
 
   $owner = get_file_owner_name($pid);
-
   if (is_string($owner)) {
     if ($checkUser == $owner) {
       $access = TRUE;
@@ -443,6 +476,38 @@ function obj_manage($pid) {
   return $access;
 }
 
+/**
+ * Check to see if the user can access delete of a node. Which is only if they are an admin or node owner
+ * when the node has associated files.
+ *
+ * @param $pid
+ *   The object trying to be accessed.
+ */
+function can_user_access_delete($nid) {
+  global $user;
+  $access = FALSE;
+  $checkUser = $user->name;
+
+  $check_files = db_query("SELECT pid FROM {node_fedora_objects} WHERE nid = %d", $nid);
+  $hasfiles = db_result($check_files);
+
+  $result = db_query("SELECT uid FROM {node} WHERE nid = %d", $nid);
+  $uid = db_result($result);
+
+  $results = db_query("SELECT name FROM {users} WHERE uid = %d". $uid);
+  $nOwner = db_result($results);
+
+  if (($checkUser == 'admin' || $checkUser == $nOwner) && !empty($hasfiles)) {
+    $access = TRUE;
+  }
+  //if there are not objects on the node then the user has full right to manage the page/delete
+  if (empty($hasfiles)) {
+    $access = TRUE;
+  }
+
+  return $access;
+}
+
 function _islandora_upload_form($node) {
   global $user;
 
@@ -457,18 +522,16 @@ function _islandora_upload_form($node) {
     $form['islandora_files']['#tree'] = TRUE;
     foreach ($node->islandora_files as $key => $file) {
       $file = (object)$file;
-
-      $form['islandora_files'][$key]['description'] = array('#type' => 'textfield', '#default_value' => !empty($file->description) ? $file->description : $file->filename, '#maxlength' => 256, '#description' => $description );
-      $form['islandora_files'][$key]['mimetype'] = array('#value' => $file->filemime);
-      $form['islandora_files'][$key]['size'] = array('#value' => format_size($file->filesize));
+      $form['islandora_files'][$key]['description'] = array('#type' => 'textfield', '#default_value' => !empty($file->description) ? $file->description : $file->filename, '#maxlength' => 256, '#description' => check_plain($description) );
+      $form['islandora_files'][$key]['mimetype'] = array('#value' => check_plain($file->filemime));
+      $form['islandora_files'][$key]['size'] = array('#value' => check_plain(format_size($file->filesize)));
       $form['islandora_files'][$key]['remove'] = array('#type' => 'checkbox', '#default_value' => !empty($file->remove));
-      //$form['islandora_files'][$key]['list'] = array('#type' => 'checkbox',  '#default_value' => $file->list);
       $form['islandora_files'][$key]['weight'] = array('#type' => 'weight', '#delta' => count($node->islandora_files), '#default_value' => $file->weight);
-      $form['islandora_files'][$key]['filename'] = array('#type' => 'value',  '#value' => $file->filename);
-      $form['islandora_files'][$key]['filepath'] = array('#type' => 'value',  '#value' => $file->filepath);
-      $form['islandora_files'][$key]['filemime'] = array('#type' => 'value',  '#value' => $file->filemime);
-      $form['islandora_files'][$key]['filesize'] = array('#type' => 'value',  '#value' => $file->filesize);
-      $form['islandora_files'][$key]['pid'] = array('#type' => 'value',  '#value' => $file->pid);
+      $form['islandora_files'][$key]['filename'] = array('#type' => 'value',  '#value' => check_plain($file->filename));
+      $form['islandora_files'][$key]['filepath'] = array('#type' => 'value',  '#value' => check_plain($file->filepath));
+      $form['islandora_files'][$key]['filemime'] = array('#type' => 'value',  '#value' => check_plain($file->filemime));
+      $form['islandora_files'][$key]['filesize'] = array('#type' => 'value',  '#value' => check_plain($file->filesize));
+      $form['islandora_files'][$key]['pid'] = array('#type' => 'value',  '#value' => check_plain($file->pid));
       $form['islandora_files'][$key]['new'] = array('#type' => 'value', '#value' => FALSE);
     }
   }
@@ -481,8 +544,7 @@ function _islandora_upload_form($node) {
       '#type' => 'file',
       '#title' => t('Attach new file'),
       '#size' => 40,
-      //'#description' => ($limits['resolution'] ? t('Images are larger than %resolution will be resized. ', array('%resolution' => $limits['resolution'])) : '') . t('The maximum upload size is %filesize. Only files with the following extensions may be uploaded: %extensions. ', array('%extensions' => $limits['extensions'], '%filesize' => format_size($limits['file_size']))),
-    );
+      );
     $form['new']['attach'] = array(
       '#type' => 'submit',
       '#value' => t('Attach'),
@@ -499,7 +561,11 @@ function _islandora_upload_form($node) {
   return $form;
 }
 
-
+/**
+ *  Form alter - alters the node type pages to include the islandora uploader
+ *
+ *
+ */
 function islandora_upload_form_alter(&$form, $form_state, $form_id) {
   if ($form_id == 'node_type_form' && isset($form['identity']['type'])) {
     $form['workflow']['upload'] = array(
@@ -512,6 +578,25 @@ function islandora_upload_form_alter(&$form, $form_state, $form_id) {
 
   if (isset($form['type']) && isset($form['#node'])) {
     $node = $form['#node'];
+      //This hidden box is used to trigger js include to hide the node delete button from users who are not an admin or node owner
+      //to prevent someone from removing fedora object to node relationship or .
+      if (!empty($node->nid)) {
+        // If user doesn't have access to delete hide the delete button by setting this hidden box to hide
+        if (!can_user_access_delete($node->nid)) {
+          $form['hide-delete'] = array(
+          '#type' => 'hidden',
+          '#id' => 'check-delete',
+          '#value' => "hide");
+        }
+      }
+      else {
+        $form['hide-delete'] = array(
+        '#type' => 'hidden',
+        '#id' => 'check-delete',
+        '#value' => "");
+
+      }
+      drupal_add_js(drupal_get_path('module', 'islandora_upload') . '/hide_delete.js');
     if ($form['type']['#value'] .'_node_form' == $form_id && variable_get("upload_$node->type", TRUE)) {
       // Attachments fieldset
       $form['attachments'] = array(
@@ -520,7 +605,7 @@ function islandora_upload_form_alter(&$form, $form_state, $form_id) {
         '#title' => t('Islandora attachments'),
         '#collapsible' => TRUE,
         '#collapsed' => empty($node->islandora_files),
-        '#description' => t('Changes made to the attachments are not permanent until you save this post. The first "listed" file will be included in RSS feeds.'),
+        '#description' => t('Changes made to the attachments are not permanent until you save this post.'),
         '#prefix' => '<div class="attachments">',
         '#suffix' => '</div>',
         '#weight' => 30,
@@ -557,7 +642,7 @@ function islandora_upload_nodeapi(&$node, $op, $teaser = NULL) {
   global $user;
   switch ($op) {
 
-    case 'load':
+    case 'load': //used to populate files array on edit
       $output = '';
       if (variable_get("islandora_upload_$node->type", 1) == 1) {
         $output['islandora_files'] = islandora_upload_load($node);
@@ -566,6 +651,7 @@ function islandora_upload_nodeapi(&$node, $op, $teaser = NULL) {
       break;
 
     case 'view':
+      // Populate files array on view had to do it differently then load because on edit you only want management to have access.
       $node->islandora_files = islandora_get_PIDs($node, 'view');
       if (isset($node->islandora_files) && user_access('view attached files')) {
       // Add the attachments list to node body with a heavy
@@ -583,8 +669,9 @@ function islandora_upload_nodeapi(&$node, $op, $teaser = NULL) {
 
     case 'insert':
       if (user_access('upload files')) {
-        islandora_upload_save($node, $user->uid);
+        islandora_upload_save($node, $user->uid); //ingest, delete or update files
       }
+      //redirect to the set file permissions page after node has been created if there were files ingested.
       if (count($node->islandora_files)) {
         $_REQUEST['destination'] = 'node/islandora_file_permissions/'. $node->nid;
       }
@@ -592,28 +679,37 @@ function islandora_upload_nodeapi(&$node, $op, $teaser = NULL) {
 
     case 'update':
       if (user_access('attach files')) {
-        islandora_upload_save($node, $user->uid);
+        islandora_upload_save($node, $user->uid); //ingest, delete or update files
       }
+      //redirect to the set file permissions page after node has been altered if there are files accessible by user.
       if (count($node->islandora_files)) {
         $_REQUEST['destination'] = 'node/islandora_file_permissions/'. $node->nid;
       }
       break;
 
     case 'delete':
-      islandora_upload_delete($node);
+//      if (check_user_delete($user->name)){
+//        islandora_upload_purge_fedora_objects($node, $uid);
+//      }
+//      else {
+//        islandora_upload_delete_fedora_objects($node, $uid);
+//      }
       break;
 
-    case 'search result':
+    case 'search result': //TODO - change code
       return isset($node->islandora_files) && is_array($node->islandora_files) ? format_plural(count($node->islandora_files), '1 attachment', '@count attachments') : NULL;
 
     case 'rss item':
       if (is_array($node->islandora_files)) {
         $files = array();
         foreach ($node->islandora_files as $file) {
-          if ($file->list) {
-            $files[] = $file;
+          if ($file->pid) {
+            if (obj_access($file->pid)) {
+              $files[] = $file;
+            }
           }
         }
+        //TODO Test
         if (count($files) > 0) {
           // RSS only allows one enclosure per item
           $file = array_shift($files);
@@ -686,7 +782,7 @@ function islandora_upload_save(&$node, $uid) {
         $fedora_item = new Fedora_Item($file->pid);
         if  ($fedora_item->exists())  {
           $log_message = "User {" . $uid . "} has removed the object from the associated node.";
-          if (obj_manage($file->pid)) { //TODO - add user check to who has permission to purge
+          if (obj_manage($file->pid)) {
             $fedora_item->purge($log_message, TRUE); //remove the fedora object
           }
           else {
@@ -709,7 +805,12 @@ function islandora_upload_save(&$node, $uid) {
       }
       //delete relationship
       db_query("DELETE FROM {node_fedora_objects} WHERE pid = '%s'", $file->pid);
-
+      //delete permissions
+      $result = db_query("SELECT iapid FROM {islandora_attachment_permissions} WHERE pid = '%s'", $file->pid);
+      $iapid = db_result($result);
+      db_query("DELETE FROM {islandora_attachment_permissions} WHERE pid = '%s'", $file->pid);
+      db_query("DELETE FROM {islandora_attachment_permission_users} WHERE ubid = %d", $iapid );
+      db_query("DELETE FROM {islandora_attachment_permission_roles} WHERE rbid = %d", $iapid );
       // Remove it from the session in the case of new uploads,
       // that you want to disassociate before node submission.
       unset($node->islandora_files[$pid]);
@@ -719,7 +820,6 @@ function islandora_upload_save(&$node, $uid) {
 
     // Create a new revision, or associate a new file needed.
     if ($file->new) {
-
       // Params for ingest_new_item($pid = '', $state = 'A', $label = '', $owner = '')
       // IMPORTANT NOTE: THE OBJ AND PID LABEL SHOULD ALWAYS MATCH
       $fedora_item = Fedora_Item::ingest_new_item(Fedora_Item::get_next_PID_in_namespace("islandora"), 'A', $file->description, $user->name);
@@ -743,22 +843,6 @@ function islandora_upload_save(&$node, $uid) {
   foreach ($new_pids as $pid) {
     db_query("INSERT INTO {node_fedora_objects} (nid, pid, ownerid) VALUES (%d, '%s', %d)", $node->nid, $pid, $uid);
   }
-}
-
-/**
- *  Delete File records from fedora repo when node is deleted.
- *  TODO
- */
-function islandora_upload_delete($node) {
-
-}
-
-/**
- *  Chooses purge if user has purge rights otherwise calls object delete.
- *  TODO
- */
-function islandora_upload_purge_or_delete($pid, $uid) {
-
 }
 
 /**
@@ -906,9 +990,9 @@ function islandora_upload_js() {
  *   The current User ID. (This is the user deleting the node)
  *
  */
-
 function islandora_upload_delete_fedora_object_datastreams($node, $uid) {
-
+  // Load fedora_item.inc from the fedora_repository module in the api folder.
+  module_load_include('inc', 'fedora_repository', 'api/fedora_item');
   //Grab all pid attached to the drupal node
   $sql = "SELECT pid FROM {node_fedora_objects} WHERE nid = '" . $node->nid . "'";
   $results = db_query($sql);
@@ -937,9 +1021,9 @@ function islandora_upload_delete_fedora_object_datastreams($node, $uid) {
  *   The current User ID. (This is the user deleting the node)
  *
  */
-
 function islandora_upload_purge_fedora_objects($node, $uid) {
-
+  // Load fedora_item.inc from the fedora_repository module in the api folder.
+  module_load_include('inc', 'fedora_repository', 'api/fedora_item');
   //Grab all pid attached to the drupal node
   $sql = "SELECT pid FROM {node_fedora_objects} WHERE nid = '" . $node->nid . "'";
   $results = db_query($sql);
@@ -950,6 +1034,12 @@ function islandora_upload_purge_fedora_objects($node, $uid) {
       $log_message = "Node {NID:" . $node->nid . "} created by {UID:" . $node->uid . "} which is associate with this object has been purged by user {" . $uid . "}.";
       $fedora_item->purge($log_message, TRUE); //remove the fedora object
     }
+    //delete any saved permissions from the tables
+    $result = db_query("SELECT iapid FROM {islandora_attachment_permissions} WHERE pid = '%s'", $PID);
+    $iapid = db_result($result);
+    db_query("DELETE FROM {islandora_attachment_permissions} WHERE pid = '%s'", $PID);
+    db_query("DELETE FROM {islandora_attachment_permission_users} WHERE ubid = %d", $iapid );
+    db_query("DELETE FROM {islandora_attachment_permission_roles} WHERE rbid = %d", $iapid );
   }
   db_query("DELETE FROM {node_fedora_objects} where nid = '" . $node->nid . "'");
 }
@@ -964,9 +1054,9 @@ function islandora_upload_purge_fedora_objects($node, $uid) {
  *   The current User ID. (This is the user deleting the node)
  *
  */
-
 function islandora_upload_delete_fedora_objects($node, $uid) {
-
+  // Load fedora_item.inc from the fedora_repository module in the api folder.
+  module_load_include('inc', 'fedora_repository', 'api/fedora_item');
   //Grab all pid attached to the drupal node
   $sql = "SELECT pid FROM {node_fedora_objects} WHERE nid = '" . $node->nid . "'";
   $results = db_query($sql);
@@ -980,6 +1070,12 @@ function islandora_upload_delete_fedora_objects($node, $uid) {
       $log_message = "Node {NID:" . $node->nid . "} created by {UID:" . $node->uid . "} which is associate with this object has been deleted by user {" . $uid . "}.";
       $fedora_item->modify_object($label, $state, $ownerId, $logMessage, TRUE);
     }
+    //delete any saved permissions from the tables
+    $result = db_query("SELECT iapid FROM {islandora_attachment_permissions} WHERE pid = '%s'", $PID);
+    $iapid = db_result($result);
+    db_query("DELETE FROM {islandora_attachment_permissions} WHERE pid = '%s'", $PID);
+    db_query("DELETE FROM {islandora_attachment_permission_users} WHERE ubid = %d", $iapid );
+    db_query("DELETE FROM {islandora_attachment_permission_roles} WHERE rbid = %d", $iapid );
   }
   db_query("DELETE FROM {node_fedora_objects} WHERE nid = '" . $node->nid . "'");
 }
@@ -993,30 +1089,24 @@ function islandora_upload_delete_fedora_objects($node, $uid) {
  *   The Private User Name (owner of the node/file) or false
  *
  */
-
 function get_file_owner_name($pid) {
-module_load_include('inc', 'fedora_repository', 'api/fedora_item');
-module_load_include('inc', 'fedora_repository', 'api/fedora_utils');
-  $result = FALSE;
-  //Grab privateUID of a file using the PID
-  $sql = "SELECT private_permission FROM {islandora_attachment_permissions} WHERE pid = '" . $pid . "'";
-  $results = db_query($sql);
-  $results = db_result($results);
+  module_load_include('inc', 'fedora_repository', 'api/fedora_item');
+  module_load_include('inc', 'fedora_repository', 'api/fedora_utils');
+  $result = "";
 
-  if ($results == 1) {
-    $fedora_item = new Fedora_Item($pid);
-    if ($fedora_item->exists()) {
-      $url = variable_get('fedora_base_url', 'http://localhost:8080/fedora');
+  $fedora_item = new Fedora_Item($pid);
+  if ($fedora_item->exists()) {
+    $url = variable_get('fedora_base_url', 'http://localhost:8080/fedora');
 
-      $url .= "/objects?terms=$pid&ownerId=true&resultFormat=xml";
+    $url .= "/objects?terms=$pid&ownerId=true&resultFormat=xml";
 
-      $resultxml = do_curl($url);
-      $resultelements = simplexml_load_string($resultxml);
-      if (!empty($resultelements)) {
-        $result = (string) $resultelements->resultList->objectFields->ownerId;
-      }
+    $resultxml = do_curl($url);
+    $resultelements = simplexml_load_string($resultxml);
+    if (!empty($resultelements)) {
+      $result = (string) $resultelements->resultList->objectFields->ownerId;
     }
   }
+
   return $result;
 }
 
@@ -1071,7 +1161,6 @@ function get_file_accessable_users($pid) {
  *   An array of allowed role Names.
  *
  */
-
 function get_file_accessable_roles($pid) {
   $result = array();
   //Grab iapid (islandora attachment permission ID) of a file using the PID to look up
@@ -1097,8 +1186,11 @@ function get_file_accessable_roles($pid) {
   return $result;
 }
 
+/**
+ *  Used to redirect back to the node view page after changing permissions
+ *
+ */
 function islandora_upload_file_permission_form_submit($form, &$form_state) {
-  //check files that are set and if not set set to public?
 
   // url example ?q=node/islandora_file_permissions/22
   // arg(0) = node, arg(1) = islandora_file_permissions, arg(2) = 22
@@ -1109,6 +1201,10 @@ function islandora_upload_file_permission_form_submit($form, &$form_state) {
   $form_state['redirect'] = 'node/'. $node_id; // Redirects the user.
 }
 
+/**
+ *  Call drupal get form on a permissions form where the user has access to manage viewing permissions.
+ *
+ */
 function islandora_upload_permissions_form() {
 
   // This form calls the form builder function via the
@@ -1255,8 +1351,10 @@ function islandora_upload_file_permission_form($form_state) {
     //will not pull the users and roles.
     unset($_POST['files']);
   }
+  // JS file that runs the permissions page.
   drupal_add_js(drupal_get_path('module', 'islandora_upload') . '/permission_selectbox.js');
-  drupal_add_css(drupal_get_path('module', 'islandora_upload') .'/islandora_upload.css');
+  // CSS used for the table to put a separater between checkboxs.
+  drupal_add_css(drupal_get_path('module', 'islandora_upload') . '/islandora_upload.css');
 
   $results = db_query("SELECT pid FROM {node_fedora_objects} WHERE nid = %d", $node_id);
   $file_array = array();
@@ -1265,9 +1363,9 @@ function islandora_upload_file_permission_form($form_state) {
   while ($row = db_fetch_object($results)) {
     //get fedora label for pid
     $fedora_item = new Fedora_Item($row->pid);
-    if($fedora_item->exists() && obj_manage($row->pid)) {
+    if ($fedora_item->exists() && obj_manage($row->pid)) {
       $label = $fedora_item->objectProfile->objLabel;
-      $file_array[base_path() . "?q=filepermissions/get/" . $row->pid] = $label;
+      $file_array["?q=filepermissions/get/" . $row->pid] = $label;
       $perm_check = db_query("SELECT iapid FROM {islandora_attachment_permissions} WHERE pid = '%s'", $row->pid);
       if (!db_fetch_object($perm_check)) {
         //Set permissions to public - public objects have no XACML
@@ -1333,7 +1431,21 @@ function islandora_upload_file_permission_form($form_state) {
   return $form;
 }
 
+/**
+ *  This is used as an ajax request call by the file access permission setting page.  This will return a json object of all the checkboxes
+ *  that should be displayed (all users minus admin users and all roles minus administrators)  and it will populate them pre checked if the user
+ *  has already set permissions for the file.  This will also return the default selected radio button for permissions.
+ *  @fedore_pid
+ *    The object pid you wish to get permissions for.
+ *  @return
+ *    JSON array of checkboxes the first array item is used to set information needed about the returned results for the JS to parse properly.
+ *
+ *  # Used by permission_selectbox.js.
+ */
 function islandora_upload_get_by_file_id($fedora_pid) {
+  // Load fedora_item.inc from the fedora_repository module in the api folder.
+  module_load_include('inc', 'fedora_repository', 'api/fedora_item');
+
   //string pad variables for better spacings
   $items = array();
   $checked_role_array = array();
@@ -1416,7 +1528,7 @@ function islandora_upload_get_by_file_id($fedora_pid) {
     $count_roles = $count_rows;
   }
 
-  // Pass the Radio button to be checked off the default is Public.
+  // Pass the Radio button to be checked off the default is Public. - used for debugging
   // edit-permission-radios-0 is Public with a value 0.
   // edit-permission-radios-1 is Private with a value 1.
   // edit-permission-radios-2 is Roles with a value 2.
@@ -1466,7 +1578,7 @@ function islandora_upload_get_by_file_id($fedora_pid) {
     else {
       $checked = FALSE;
     }
-    if($add_user) {
+    if ($add_user) {
       $items[] = array(
         'data' => $row->name,
         'id_value' => $row->uid,
@@ -1583,16 +1695,14 @@ function islandora_upload_create_xacml_policy_private($pid, $uid, $node_ownerid)
   //Generate XACML
   $xacml = new Xacml();
   $xacml->managementRule->addUser($user_name);
-  $xacml->viewingRule->addUser($user_name);
-
+  //$xacml->viewingRule->addUser($user_name);
 
   if (!empty($owner_name)) {
     $xacml->managementRule->addUser($owner_name);
-    $xacml->viewingRule->addUser($owner_name);
+    //$xacml->viewingRule->addUser($owner_name);
   }
 
   $xml = $xacml->getXmlString(); //create the xacml xml
-
 
   //Attach XACML
   $fedora_item = new Fedora_Item($pid);
@@ -1637,23 +1747,21 @@ function islandora_upload_create_xacml_policy_users($pid, $uid, $node_ownerid) {
     $owner_name = "";
   }
   $fedora_item = new Fedora_Item($pid);
-
   if ($fedora_item->exists()) {
     //Get Users - returns an array of user names or null if the table is empty
-    $users = get_file_accessable_users($pid);
+    //$users = get_file_accessable_users($pid);
+
     //Generate XACML
     $xacml = new Xacml();
 
     $xacml->managementRule->addUser($user_name);
-    //$xacml->viewingRule->addUser($user);
     if (!empty($owner_name)) {
       $xacml->managementRule->addUser($owner_name);
-      $xacml->viewingRule->addUser($user);
     }
 
-    foreach ($users as $user) {
-      $xacml->viewingRule->addUser($user);
-    }
+    // foreach ($users as $user) {
+    //   $xacml->viewingRule->addUser($user);
+    // }
     $xml = $xacml->getXmlString(); //create the xacml xml
 
     //Attach XACML
@@ -1699,19 +1807,19 @@ function islandora_upload_create_xacml_policy_roles($pid, $uid, $node_ownerid) {
   $fedora_item = new Fedora_Item($pid);
   if ($fedora_item->exists()) {
     //Get Roles - returns an array of role names or null if the table is empty
-    $roles = get_file_accessable_roles($pid);
+    //$roles = get_file_accessable_roles($pid);
 
     //Generate XACML
     $xacml = new Xacml();
     $xacml->managementRule->addUser($user_name);
 
     if (!empty($owner_name)) {
-      $xacml->viewingRule->addUser($owner_name);
+      $xacml->managementRule->addUser($owner_name);
     }
 
-    foreach ($roles as $role) {
-      $xacml->viewingRule->addRole($role);
-    }
+    //foreach ($roles as $role) {
+    //  $xacml->viewingRule->addRole($role);
+    //}
     $xml = $xacml->getXmlString();
 
     //Attach XACML
@@ -1743,5 +1851,4 @@ function islandora_upload_purge_xacml_policy($pid, $uid) {
       $fedora_item->purge_datastream('POLICY', NULL, NULL, $log_message);
     }
   }
-
 }
