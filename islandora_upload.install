@@ -181,9 +181,9 @@ function generic_collection() {
     $temp_item=new Fedora_Item('islandora:Generic_Collection');
     if (!$temp_item->exists()) {
       $new_item = fedora_item::ingest_new_item('islandora:Generic_Collection', 'A', 'Islandora Generic Upload Collection');
-      $new_item->add_relationship('isMemberOfCollection', 'islandora:root');
       $new_item->add_relationship('hasModel', 'islandora:generic_CM', FEDORA_MODEL_URI);
-      $new_item->add_datastream_from_file(drupal_get_path('module', 'islandora_upload') . '/xml/GENERIC-COLLECTION_POLICY.xml', 'COLLECTION_POLICY', 'Collection Policy', 'text/xml', 'X'); // $cp = removed
+      $new_item->add_relationship('isMemberOfCollection', 'islandora:root');
+      $new_item->add_datastream_from_file(drupal_get_path('module', 'islandora_upload') . '/xml/GENERIC-COLLECTION_POLICY.xml', 'COLLECTION_POLICY', 'Collection Policy', 'text/xml', 'X');
       $new_item->add_datastream_from_file(drupal_get_path('module', 'islandora_upload') . '/images/Crystal_Clear_filesystem_folder_grey.png', 'TN', 'Thumbnail.png', 'image/png', 'M');
     }
   }

@@ -804,6 +804,7 @@ function islandora_upload_save(&$node, $uid) {
       $fedora_item = Fedora_Item::ingest_new_item(Fedora_Item::get_next_PID_in_namespace("islandora"), 'A', $file->description, $user->name);
       $fedora_item->add_datastream_from_file($file->filepath, "OBJ", $file->filename);
       $fedora_item->add_relationship("fedora:isMemberOfCollection", "islandora:Generic_Collection");
+      $fedora_item->add_relationship('hasModel', 'islandora:generic_CM', 'info:fedora/fedora-system:def/model#');
 
       array_push($new_pids, $fedora_item->pid);
     }
