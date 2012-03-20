@@ -10,8 +10,12 @@
 function islandora_upload_help($path, $arg) {
   switch ($path) {
     case 'admin/help#islandora_upload':
-      $output = '<p>'. t('Islandora Upload Module') .'</p>'; //TODO - update text':
-      $output .= '<p>'. t('This module is enabled on any node creation process and allows the user to attach files through a drupal interface but have them ingested and stored in the fedora database.  Upon uploading a file or editing the node a user can set viewing access for the uploaded files only if they are the uploader, node owner or an admin user.  To use this module you most grant the following permissions: ') .'</p>';
+      $output = '<p>'. t('Islandora Upload Module') .'</p>';
+      $output .= '<p>'. t('This module is enabled on any node creation or edit process and allows the user to attach files through a drupal interface but have them ingested and stored in the fedora database.  Upon uploading a file or editing the node a user can set or reset viewing access for the uploaded files only if they are the uploader, node owner or an admin user.  These users will be always granted XACML rights to manage all objects uploaded and because of this the node delete button will be removed from node edit pages when the user is not admin or node owner.  To use this module you must grant the following permissions: ') .'</p>';
+      $output .= ' <ul><li><h3>' . t('fedora_repository') . '</h3></li><ul><li>' . t('View Fedora Collection - Needed to view objects ingested into the fedora repository') . '</li></ul>';
+      $output .= ' <li><h3>' . t('islandora_upload') . '</h3></li><ul><li>' . t('attach files - need to access islandora attach file on add/edit of node pages') . '</li></ul>';
+      $output .= ' <li><h3>' . t('node module') . '</h3><ul></li><li>' . t('access content - so users can access node view pages which lists islandora attachments') . '</li><li>' . t('Create, Edit, Delete - so users can access islandora attachments on add, edit and deletion of nodes for the specified node type(s)') . '</li></ul></ul>';
+      $output .= '<p>'. t('The Islandora Uploader settings allows administrators to see a list of allowed file types and to set max upload size restrictions both generally or by role that has attach files permission.') .'</p>';
       return $output;
   }
 }
