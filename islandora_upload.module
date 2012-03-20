@@ -72,7 +72,6 @@ function islandora_upload_theme() {
  */
 function islandora_upload_perm() {
   return array('attach files');
-  //return array('node attach islandora files', 'node view islandora files'); //TODO - replace permissions with these
 }
 
 /**
