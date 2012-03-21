@@ -705,12 +705,14 @@ function islandora_upload_nodeapi(&$node, $op, $teaser = NULL) {
       break;
 
     case 'delete':
-      if (check_user_delete($node)) {
-        islandora_upload_purge_fedora_objects($node, $user);
-      }
-      else {
+      // As a request the purge upon node removal has been removed to give users the ability to recover files
+      // after deletion.  To return it to purging uncomment out the if and else and closing else brace
+      //if (check_user_delete($node)) {
+      //  islandora_upload_purge_fedora_objects($node, $user);
+      //}
+      //else {
         islandora_upload_delete_fedora_objects($node, $user);
-      }
+      //}
       break;
   }
 }
@@ -769,7 +771,7 @@ function islandora_upload_save(&$node, $uid) {
           }
           else {
             $url = variable_get('fedora_base_url', 'http://localhost:8080/fedora');
-            $url .= "/objects?terms=$pid&ownerId=true&resultFormat=xml";
+            $url .= "/objects?terms=" . $file->pid . "&ownerId=true&resultFormat=xml";
             $resultxml = do_curl($url);
             $resultelements = simplexml_load_string($resultxml);
             if (!empty($resultelements)) {
@@ -818,7 +820,7 @@ function islandora_upload_save(&$node, $uid) {
         //only need to make the soap call if user changed description
         if ($fedora_item->objectProfile->objLabel != $file->description) {
           $url = variable_get('fedora_base_url', 'http://localhost:8080/fedora');
-          $url .= "/objects?terms=$pid&ownerId=true&resultFormat=xml";
+          $url .= "/objects?terms=" . $file->pid . "&ownerId=true&resultFormat=xml";
           $resultxml = do_curl($url);
           $resultelements = simplexml_load_string($resultxml);
           if (!empty($resultelements)) {
@@ -1061,7 +1063,7 @@ function islandora_upload_delete_fedora_objects($node, $user) {
       $state = "D";
       $label = $fedora_item->objectProfile->objLabel; // needs to be filled in with objects label.
       $url = variable_get('fedora_base_url', 'http://localhost:8080/fedora');
-      $url .= "/objects?terms=$pid&ownerId=true&resultFormat=xml";
+      $url .= "/objects?terms=$PID&ownerId=true&resultFormat=xml";
       $resultxml = do_curl($url);
       $resultelements = simplexml_load_string($resultxml);
       if (!empty($resultelements)) {
@@ -1360,7 +1362,7 @@ function islandora_upload_file_permission_form($form_state) {
 
   $results = db_query("SELECT pid FROM {node_fedora_objects} WHERE nid = %d", $node_id);
   $file_array = array();
-  $file_array['0'] = ""; //white space for first record of the drop down.
+  $file_array['0'] = " - Select A File - "; //white space for first record of the drop down.
   //$file_array[base_path() . "?q=filepermissions/get/all"] = "Set All"; //white space for first record of the drop down.
   while ($row = db_fetch_object($results)) {
     //get fedora label for pid
@@ -1379,7 +1381,8 @@ function islandora_upload_file_permission_form($form_state) {
         else {
           $node_ownerid = $user->uid;
         }
-        islandora_upload_create_xacml_policy_public($row->pid, $user->uid, $node_ownerid);
+        $message = $label . " has been set to public access by default.";
+        drupal_set_message(check_plain($message), 'status');
       }
     }
   }
