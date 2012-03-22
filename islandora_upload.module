@@ -230,23 +230,30 @@ function islandora_upload_node_form_submit(&$form, &$form_state) {
   );
 
   if (user_access('attach files'))  {
-    $file = file_save_upload('islandoraupload', $validators, file_directory_path());
-    $check = islandora_check_mime($file);
-    if (!empty($check)) {
-      drupal_set_message("$check", 'error');
-      file_delete($file->filepath);
-    }
-    else {
-      if (!empty($file)) {
-        // Save new file uploads.
-        $file->list = 1;
-        $file->description = $file->filename;
-        $file->weight = 0;
-        $file->new = TRUE;
-        $form['#node']->islandora_files[$file->fid] = $file;
-        $form_state['values']['islandora_files'][$file->fid] = (array)$file;
+    if ($file = file_save_upload('islandoraupload', $validators, file_directory_path())) {
+      $check = islandora_check_mime($file);
+      if (!empty($check)) {
+        drupal_set_message("$check", 'error');
+        file_delete($file->filepath);
+      }
+      else {
+        if (!empty($file)) {
+          // Save new file uploads.
+          $file->list = 1;
+          $file->description = $file->filename;
+          $file->weight = 0;
+          $file->new = TRUE;
+          $form['#node']->islandora_files[$file->fid] = $file;
+          $form_state['values']['islandora_files'][$file->fid] = (array)$file;
+        }
       }
     }
+    else {
+      if (!is_array($form_state['clicked_button']) && !$file) {
+        drupal_set_message(t("File size exceeds the defined allowed file limit."), "error");
+      }
+    }
+
     if (isset($form_state['values']['islandora_files'])) {
       foreach ($form_state['values']['islandora_files'] as $fid => $file) {
         // If the node was previewed prior to saving, $form['#node']->files[$fid]
@@ -782,7 +789,7 @@ function islandora_upload_save(&$node, $uid) {
             }
             $state = "D";
             $label = $fedora_item->objectProfile->objLabel; // needs to be filled in with objects label.
-            $log_message = "Node (NID:" . $node->nid . ") created by (UID:" . $node->uid . ") which is associate with this object has been deleted by user : " . $user->name . " (" . $user->uid . ").";
+            $log_message = "Node (NID:" . $node->nid . ") created by (UID:" . $node->uid . ") which was associated with this object has been deleted by user : " . $user->name . " (" . $user->uid . ").";
             $fedora_item->modify_object($label, $state, $ownerId, $log_message, TRUE);
           }
         }
@@ -808,8 +815,10 @@ function islandora_upload_save(&$node, $uid) {
       // IMPORTANT NOTE: THE OBJ AND PID LABEL SHOULD ALWAYS MATCH
       $fedora_item = Fedora_Item::ingest_new_item(Fedora_Item::get_next_PID_in_namespace("islandora"), 'A', $file->description, $user->name);
       $fedora_item->add_datastream_from_file($file->filepath, "OBJ", $file->filename);
-      $fedora_item->add_relationship("fedora:isMemberOfCollection", "islandora:Generic_Collection");
-      $fedora_item->add_relationship('hasModel', 'islandora:generic_CM', 'info:fedora/fedora-system:def/model#');
+      $fedora_item->add_relationship("fedora:isMemberOfCollection", "islandora:sp_generic_collection");
+      $fedora_item->add_relationship('hasModel', 'islandora:sp_generic', 'info:fedora/fedora-system:def/model#');
+      $fedora_item->add_datastream_from_file(drupal_get_path('module', 'islandora_generic_sp') . '/images/Crystal_Clear_filesystem_folder_grey.png', 'TN', 'Thumbnail.png', 'image/png', 'M');
+      file_delete($file->filepath);
 
       array_push($new_pids, $fedora_item->pid);
     }
