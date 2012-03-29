@@ -778,7 +778,7 @@ function islandora_upload_save(&$node, $uid) {
           $resultxml = do_curl($url);
           $resultelements = simplexml_load_string($resultxml);
           if (!empty($resultelements)) {
-            $ownerID = (string) $resultelements->resultList->objectFields->ownerId;
+            $ownerId = (string) $resultelements->resultList->objectFields->ownerId;
           }
           else {
             $ownerId = NULL;
