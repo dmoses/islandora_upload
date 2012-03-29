@@ -773,25 +773,21 @@ function islandora_upload_save(&$node, $uid) {
         $fedora_item = new Fedora_Item($file->pid);
         if  ($fedora_item->exists())  {
           $log_message = "User : " . $user->name . " (" . $user->uid . ") has removed the object from the associated node.";
-          if (obj_manage($file->pid)) {
-            $fedora_item->purge($log_message, TRUE); //remove the fedora object
+          $url = variable_get('fedora_base_url', 'http://localhost:8080/fedora');
+          $url .= "/objects?terms=" . $file->pid . "&ownerId=true&resultFormat=xml";
+          $resultxml = do_curl($url);
+          $resultelements = simplexml_load_string($resultxml);
+          if (!empty($resultelements)) {
+            $ownerID = (string) $resultelements->resultList->objectFields->ownerId;
           }
           else {
-            $url = variable_get('fedora_base_url', 'http://localhost:8080/fedora');
-            $url .= "/objects?terms=" . $file->pid . "&ownerId=true&resultFormat=xml";
-            $resultxml = do_curl($url);
-            $resultelements = simplexml_load_string($resultxml);
-            if (!empty($resultelements)) {
-              $ownerID = (string) $resultelements->resultList->objectFields->ownerId;
-            }
-            else {
-              $ownerId = NULL;
-            }
-            $state = "D";
-            $label = $fedora_item->objectProfile->objLabel; // needs to be filled in with objects label.
-            $log_message = "Node (NID:" . $node->nid . ") created by (UID:" . $node->uid . ") which was associated with this object has been deleted by user : " . $user->name . " (" . $user->uid . ").";
-            $fedora_item->modify_object($label, $state, $ownerId, $log_message, TRUE);
+            $ownerId = NULL;
           }
+          $state = "D";
+          $label = $fedora_item->objectProfile->objLabel; // needs to be filled in with objects label.
+          $log_message = "Node (NID:" . $node->nid . ") created by (UID:" . $node->uid . ") which was associated with this object has been deleted by user : " . $user->name . " (" . $user->uid . ").";
+          $fedora_item->modify_object($label, $state, $ownerId, $log_message, TRUE);
+
         }
       }
       //delete relationship
@@ -1007,7 +1003,7 @@ function islandora_upload_delete_fedora_object_datastreams($node, $uid) {
       $dsid_array = $fedora_item->get_datastreams_list_as_array();
       foreach ($dsid_array as $dsid) {
         $state = 'D'; //Set the datastream to deleted
-        $log_message = "Node (NID:" . $node->nid . ") created by (UID:" . $node->uid . ") which is associate with this object has been deleted by user {" . $uid . "}.";
+        $log_message = "Node (NID:" . $node->nid . ") created by (UID:" . $node->uid . ") which is associated with this object has been deleted by user {" . $uid . "}.";
         $fedora_item->set_datastream_state($dsid, $state, $log_message);
       }
     }
@@ -1035,7 +1031,7 @@ function islandora_upload_purge_fedora_objects($node, $user) {
   while ($PID = db_result($results)) { // Get the next result, which will/must always be a single field
     $fedora_item = new Fedora_Item($PID);
     if  ($fedora_item->exists())  {
-      $log_message = "Node (NID:" . $node->nid . ") created by (UID:" . $node->uid . ") which is associate with this object has been purged by user : " . $user->name . " (" . $user->uid . ").";
+      $log_message = "Node (NID:" . $node->nid . ") created by (UID:" . $node->uid . ") which is associated with this object has been purged by user : " . $user->name . " (" . $user->uid . ").";
       $fedora_item->purge($log_message, TRUE); //remove the fedora object
     }
     //delete any saved permissions from the tables
@@ -1081,7 +1077,7 @@ function islandora_upload_delete_fedora_objects($node, $user) {
       else {
         $ownerId = NULL;
       }
-      $log_message = "Node (NID:" . $node->nid . ") created by (UID:" . $node->uid . ") which is associate with this object has been deleted by user : " . $user->name . " (" . $user->uid . ").";
+      $log_message = "Node (NID:" . $node->nid . ") created by (UID:" . $node->uid . ") which is associated with this object has been deleted by user : " . $user->name . " (" . $user->uid . ").";
       $fedora_item->modify_object($label, $state, $ownerId, $log_message, TRUE);
     }
     //delete any saved permissions from the tables
@@ -1667,8 +1663,16 @@ function islandora_upload_create_xacml_policy_public($pid, $uid, $node_ownerid) 
   $xacml = new Xacml();
   $xacml->managementRule->addUser($user_name);
 
+  $xacml->managementRule->addRole('administrators');
+  $xacml->viewingRule->addRole('administrators');
   if (!empty($owner_name)) {
     $xacml->managementRule->addUser($owner_name);
+  }
+
+  // Prevents admin from locking owner of object out
+  $obj_owner = get_file_owner_name($pid);
+  if ($obj_owner != 'admin' && $obj_owner != $owner_name && $obj_owner != $user_name) {
+  $xacml->managementRule->addUser($obj_owner);
   }
 
   $xml = $xacml->getXmlString(); //create the xacml xml
@@ -1717,13 +1721,21 @@ function islandora_upload_create_xacml_policy_private($pid, $uid, $node_ownerid)
   //Generate XACML
   $xacml = new Xacml();
   $xacml->managementRule->addUser($user_name);
-  //$xacml->viewingRule->addUser($user_name);
+  $xacml->viewingRule->addUser($user_name);
+  $xacml->managementRule->addRole('administrators');
+  $xacml->viewingRule->addRole('administrators');
 
   if (!empty($owner_name)) {
     $xacml->managementRule->addUser($owner_name);
-    //$xacml->viewingRule->addUser($owner_name);
+    $xacml->viewingRule->addUser($owner_name);
   }
 
+// Prevents an admin from locking a user out of their own object
+  $obj_owner = get_file_owner_name($pid);
+if ($obj_owner != 'admin' && $obj_owner != $owner_name && $obj_owner != $user_name) {
+  $xacml->managementRule->addUser($obj_owner);
+  $xacml->viewingRule->addUser($obj_owner);
+  }
   $xml = $xacml->getXmlString(); //create the xacml xml
 
   //Attach XACML
@@ -1771,19 +1783,28 @@ function islandora_upload_create_xacml_policy_users($pid, $uid, $node_ownerid) {
   $fedora_item = new Fedora_Item($pid);
   if ($fedora_item->exists()) {
     //Get Users - returns an array of user names or null if the table is empty
-    //$users = get_file_accessable_users($pid);
+    $users = get_file_accessable_users($pid);
 
     //Generate XACML
     $xacml = new Xacml();
-
     $xacml->managementRule->addUser($user_name);
+    $xacml->viewingRule->addUser($user_name);
+    $xacml->managementRule->addRole('administrators');
+    $xacml->viewingRule->addRole('administrators');
     if (!empty($owner_name)) {
       $xacml->managementRule->addUser($owner_name);
+      $xacml->viewingRule->addUser($owner_name);
+    }
+    // Prevents an admin from locking a user out of their own object
+    $obj_owner = get_file_owner_name($pid);
+    if ($obj_owner != 'admin' && $obj_owner != $owner_name && $obj_owner != $user_name) {
+      $xacml->managementRule->addUser($obj_owner);
+      $xacml->viewingRule->addUser($obj_owner);
     }
 
-    // foreach ($users as $user) {
-    //   $xacml->viewingRule->addUser($user);
-    // }
+    foreach ($users as $user) {
+      $xacml->viewingRule->addUser($user);
+    }
     $xml = $xacml->getXmlString(); //create the xacml xml
 
     //Attach XACML
@@ -1829,19 +1850,28 @@ function islandora_upload_create_xacml_policy_roles($pid, $uid, $node_ownerid) {
   $fedora_item = new Fedora_Item($pid);
   if ($fedora_item->exists()) {
     //Get Roles - returns an array of role names or null if the table is empty
-    //$roles = get_file_accessable_roles($pid);
+    $roles = get_file_accessable_roles($pid);
 
     //Generate XACML
     $xacml = new Xacml();
     $xacml->managementRule->addUser($user_name);
 
+    $xacml->managementRule->addRole('administrators');
+    $xacml->viewingRule->addRole('administrators');
+
     if (!empty($owner_name)) {
       $xacml->managementRule->addUser($owner_name);
     }
+    // Prevents an admin from locking a user out of their own object
+    $obj_owner = get_file_owner_name($pid);
+    if ($obj_owner != 'admin' && $obj_owner != $owner_name && $obj_owner != $user_name) {
+      $xacml->managementRule->addUser($obj_owner);
+      $xacml->viewingRule->addUser($obj_owner);
+    }
 
-    //foreach ($roles as $role) {
-    //  $xacml->viewingRule->addRole($role);
-    //}
+    foreach ($roles as $role) {
+      $xacml->viewingRule->addRole($role);
+    }
     $xml = $xacml->getXmlString();
 
     //Attach XACML
