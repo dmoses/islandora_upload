@@ -832,9 +832,9 @@ function islandora_upload_save(&$node, $uid) {
             $ownerID = (string) $resultelements->resultList->objectFields->ownerId;
           }
           else {
-            $ownerId = NULL;
+            $ownerID = NULL;
           }
-          $fedora_item->modify_object($file->description, 'A', $ownerId, "Object Label has been changed by user : " . $user->name . " (" . $uid . ").", TRUE);
+          $fedora_item->modify_object($file->description, 'A', $ownerID, "Object Label has been changed by user : " . $user->name . " (" . $uid . ").", TRUE);
         }
       }
     }
@@ -1276,15 +1276,15 @@ function islandora_upload_file_permission_form($form_state) {
               db_query("DELETE FROM {islandora_attachment_permission_roles} WHERE rbid = '%d' ", $iapid);
               //update query
               db_query("UPDATE {islandora_attachment_permissions} SET public_permission = 1, private_permission = 0 WHERE pid = '%s' ", $object_pid);
-              //Remove other XACML
-              //islandora_upload_purge_xacml_policy($object_pid, $user->uid);
-              islandora_upload_create_xacml_policy_public($object_pid, $user->uid, $node_ownerid);
+             
             }
             else {
               //Set permissions to public - public objects have no XACML
               //insert query
               db_query("INSERT INTO {islandora_attachment_permissions} (public_permission, private_permission, pid) VALUES (1, 0, '%s')", $object_pid);
             }
+            //Remove other XACML
+            islandora_upload_create_xacml_policy_public($object_pid, $user->uid, $node_ownerid);
             break;
 
           case '1':
@@ -1386,6 +1386,7 @@ function islandora_upload_file_permission_form($form_state) {
         else {
           $node_ownerid = $user->uid;
         }
+        islandora_upload_create_xacml_policy_public($row->pid, $user->uid, $node_ownerid);
         $message = $label . " has been set to public access by default.";
         drupal_set_message(check_plain($message), 'status');
       }
@@ -1664,7 +1665,6 @@ function islandora_upload_create_xacml_policy_public($pid, $uid, $node_ownerid) 
   $xacml->managementRule->addUser($user_name);
 
   $xacml->managementRule->addRole('administrators');
-  $xacml->viewingRule->addRole('administrators');
   if (!empty($owner_name)) {
     $xacml->managementRule->addUser($owner_name);
   }
